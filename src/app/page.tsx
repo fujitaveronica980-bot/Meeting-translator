@@ -149,22 +149,20 @@ export default function Home() {
   }, [selected]);
 
   return (
-    <div className="flex flex-1 flex-col bg-zinc-50 font-sans dark:bg-black">
+    <div className="flex flex-1 flex-col bg-background font-sans">
       <main className="mx-auto grid w-full max-w-6xl flex-1 grid-cols-1 gap-8 px-6 py-12 lg:grid-cols-[1fr_320px]">
         <div className="flex flex-col gap-8">
-          <header className="flex flex-col gap-1">
-            <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
-              Meeting Translator
-            </h1>
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          <header className="hero-gradient flex flex-col gap-1 rounded-2xl px-6 py-8 text-white shadow-sm sm:px-8 sm:py-10">
+            <h1 className="text-xl font-semibold">Meeting Translator</h1>
+            <p className="text-sm text-white/85">
               Record live or upload a Japanese meeting recording to get a bilingual (JA/EN)
               transcript, summary, action items, glossary, and cultural notes.
             </p>
           </header>
 
-          <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-5">
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Mode</label>
+              <label className="text-sm font-medium text-foreground">Mode</label>
               <div className="flex gap-2">
                 {MODES.map((m) => (
                   <button
@@ -174,8 +172,8 @@ export default function Home() {
                     disabled={recorder.status === "recording"}
                     className={`rounded-full px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                       mode === m.value
-                        ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900"
-                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                        ? "bg-accent text-accent-foreground"
+                        : "bg-subtle text-muted hover:bg-border"
                     }`}
                   >
                     {m.label}
@@ -184,10 +182,8 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-1.5 border-t border-zinc-100 pt-4 dark:border-zinc-900">
-              <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                Record live
-              </label>
+            <div className="flex flex-col gap-1.5 border-t border-border/60 pt-4">
+              <label className="text-sm font-medium text-foreground">Record live</label>
               <div className="flex items-center gap-3">
                 {recorder.status === "recording" ? (
                   <button
@@ -202,14 +198,14 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={recorder.start}
-                    className="flex items-center gap-2 rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                    className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-subtle"
                   >
                     <span className="h-2 w-2 rounded-full bg-red-500" />
                     Start Recording
                   </button>
                 )}
                 {recorder.status === "recording" && (
-                  <div className="h-2 w-24 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
+                  <div className="h-2 w-24 overflow-hidden rounded-full bg-subtle">
                     <div
                       className="h-full rounded-full bg-red-500 transition-[width] duration-100"
                       style={{ width: `${Math.round(recorder.level * 100)}%` }}
@@ -217,7 +213,7 @@ export default function Home() {
                   </div>
                 )}
               </div>
-              <p className="text-xs text-zinc-400 dark:text-zinc-500">
+              <p className="text-xs text-muted/80">
                 Uses your microphone. Hit stop when the meeting ends — it starts processing right
                 away, and the recording stays in the list on the right no matter what happens next.
               </p>
@@ -226,16 +222,14 @@ export default function Home() {
               )}
             </div>
 
-            <div className="flex flex-col gap-1.5 border-t border-zinc-100 pt-4 dark:border-zinc-900">
-              <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                Or upload a file
-              </label>
+            <div className="flex flex-col gap-1.5 border-t border-border/60 pt-4">
+              <label className="text-sm font-medium text-foreground">Or upload a file</label>
               <input
                 type="file"
                 accept="audio/*"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 disabled={recorder.status === "recording"}
-                className="text-sm text-zinc-600 file:mr-3 file:rounded-full file:border-0 file:bg-zinc-900 file:px-3 file:py-1.5 file:text-white hover:file:bg-zinc-700 disabled:opacity-40 dark:text-zinc-400 dark:file:bg-zinc-50 dark:file:text-zinc-900"
+                className="text-sm text-muted file:mr-3 file:rounded-full file:border-0 file:bg-accent file:px-3 file:py-1.5 file:text-accent-foreground hover:file:opacity-90 disabled:opacity-40"
               />
             </div>
 
@@ -248,7 +242,7 @@ export default function Home() {
                   startEntry({ kind: "upload", file, label: file.name });
                   setFile(null);
                 }}
-                className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+                className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Transcribe &amp; Analyze
               </button>
@@ -258,12 +252,12 @@ export default function Home() {
                 onClick={() =>
                   startEntry({ kind: "sample", file: null, label: "Sample recording" })
                 }
-                className="rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                className="rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Try sample recording
               </button>
             </div>
-            <p className="text-xs text-zinc-400 dark:text-zinc-500">
+            <p className="text-xs text-muted/80">
               No audio? &ldquo;Try sample recording&rdquo; runs the full pipeline on a built-in demo
               dialogue — no upload, no API keys, no cost.
             </p>
@@ -290,8 +284,8 @@ export default function Home() {
             )}
 
             {selected?.status === "processing" && (
-              <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-zinc-400" />
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-surface p-3 text-sm text-muted">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-muted" />
                 Transcribing &amp; analyzing — this can take a while for real recordings…
               </div>
             )}
@@ -301,11 +295,9 @@ export default function Home() {
         </div>
 
         <aside className="flex flex-col gap-3 lg:sticky lg:top-12 lg:self-start">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            Recordings
-          </h2>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Recordings</h2>
           {recordings.length === 0 ? (
-            <p className="text-sm text-zinc-400 dark:text-zinc-500">
+            <p className="text-sm text-muted/80">
               Nothing yet — recordings, uploads, and the sample all show up here as you make them.
             </p>
           ) : (
@@ -317,17 +309,17 @@ export default function Home() {
                     onClick={() => setSelectedId(r.id)}
                     className={`flex w-full flex-col gap-1 rounded-lg border p-3 text-left text-sm transition-colors ${
                       r.id === selectedId
-                        ? "border-zinc-900 bg-white dark:border-zinc-50 dark:bg-zinc-950"
-                        : "border-zinc-200 bg-white hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900"
+                        ? "border-accent bg-surface"
+                        : "border-border bg-surface hover:bg-subtle"
                     }`}
                   >
-                    <span className="truncate font-medium text-zinc-900 dark:text-zinc-100">
+                    <span className="truncate font-medium text-foreground">
                       {r.session?.report?.title.en || r.label}
                     </span>
-                    <span className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                    <span className="flex items-center gap-1.5 text-xs text-muted">
                       {r.status === "processing" && (
                         <>
-                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-400" />
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted" />
                           Processing…
                         </>
                       )}

@@ -1,21 +1,45 @@
 @import "tailwindcss";
 
+/*
+ * Palette: white lilac + dark blue + a soft mesh gradient accent, in the
+ * style of Stripe's marketing site. Gradient is used sparingly (just the
+ * hero band) — everything else stays a clean, readable navy-on-lilac /
+ * lilac-on-navy surface so the report content stays the focus.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8f8f9; /* white lilac */
+  --surface: #ffffff;
+  --subtle: #eeeef2;
+  --foreground: #111439; /* dark blue */
+  --muted: #5b5f82;
+  --border-color: #e2e2ea;
+  --accent: #111439;
+  --accent-foreground: #f8f8f9;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-subtle: var(--subtle);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border-color);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #111439; /* dark blue */
+    --surface: #191d4d;
+    --subtle: #20244f;
+    --foreground: #f8f8f9; /* white lilac */
+    --muted: #a3a6c9;
+    --border-color: #2c3068;
+    --accent: #f8f8f9;
+    --accent-foreground: #111439;
   }
 }
 
@@ -23,4 +47,25 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Stripe-style mesh gradient — used only for the header band. */
+.hero-gradient {
+  background-image:
+    radial-gradient(circle at 15% 20%, #ffcf7a 0%, transparent 40%),
+    radial-gradient(circle at 85% 15%, #7ad0ff 0%, transparent 45%),
+    radial-gradient(circle at 60% 80%, #a78bfa 0%, transparent 50%),
+    radial-gradient(circle at 20% 90%, #ff9ecf 0%, transparent 45%),
+    linear-gradient(135deg, #6d5bd0 0%, #8a6fe0 40%, #5b7fe0 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .hero-gradient {
+    background-image:
+      radial-gradient(circle at 15% 20%, rgba(255, 207, 122, 0.55) 0%, transparent 40%),
+      radial-gradient(circle at 85% 15%, rgba(122, 208, 255, 0.55) 0%, transparent 45%),
+      radial-gradient(circle at 60% 80%, rgba(167, 139, 250, 0.55) 0%, transparent 50%),
+      radial-gradient(circle at 20% 90%, rgba(255, 158, 207, 0.5) 0%, transparent 45%),
+      linear-gradient(135deg, #241f5c 0%, #322a70 40%, #22265c 100%);
+  }
 }
