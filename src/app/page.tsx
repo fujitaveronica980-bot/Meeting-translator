@@ -162,7 +162,12 @@ export default function Home() {
       <main className="mx-auto grid w-full max-w-6xl flex-1 grid-cols-1 gap-8 px-6 py-12 lg:grid-cols-[1fr_320px]">
         <div className="flex flex-col gap-8">
           <header className="hero-gradient flex flex-col gap-1 rounded-2xl px-6 py-8 text-white shadow-sm sm:px-8 sm:py-10">
-            <h1 className="text-xl font-semibold">Meeting Translator</h1>
+            <div className="flex items-start justify-between gap-4">
+              <h1 className="text-xl font-semibold">Meeting Translator</h1>
+              <a href="/api/logout" className="shrink-0 text-xs text-white/70 hover:text-white hover:underline">
+                Log out
+              </a>
+            </div>
             <p className="text-sm text-white/85">
               Record live or upload a Japanese meeting recording to get a bilingual (JA/EN)
               transcript, summary, action items, glossary, and cultural notes.
