@@ -36,9 +36,10 @@ export async function runSession(params: {
     status: "transcribing",
     audioFile: params.filename,
   };
-  await saveSession(session);
 
   try {
+    await saveSession(session);
+
     const stt = params.useSample ? mockProvider : getSttProvider();
     const transcription = await stt.transcribe(params.audio, {
       language: "ja",

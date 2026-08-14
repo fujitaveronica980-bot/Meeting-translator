@@ -6,11 +6,16 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> }
 ) {
   const { id } = await ctx.params;
-  const session = await getSession(id);
-  if (!session) {
-    return NextResponse.json({ error: "Session not found" }, { status: 404 });
+  try {
+    const session = await getSession(id);
+    if (!session) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+    return NextResponse.json(session);
+  } catch (err) {
+    console.error(`Failed to get session ${id}:`, err);
+    return NextResponse.json({ error: "Failed to load session" }, { status: 500 });
   }
-  return NextResponse.json(session);
 }
 
 export async function DELETE(
@@ -18,6 +23,11 @@ export async function DELETE(
   ctx: { params: Promise<{ id: string }> }
 ) {
   const { id } = await ctx.params;
-  await deleteSession(id);
-  return NextResponse.json({ ok: true });
+  try {
+    await deleteSession(id);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error(`Failed to delete session ${id}:`, err);
+    return NextResponse.json({ error: "Failed to delete session" }, { status: 500 });
+  }
 }
