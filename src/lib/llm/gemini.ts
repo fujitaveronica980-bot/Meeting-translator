@@ -172,9 +172,17 @@ Do not reproduce the transcript in your response. Instead, analyze it and produc
   if (mode === "casual") {
     prompt += `
 
-This is a SHORT BURST from a live casual conversation — the user recorded just what the other person
-said and needs help replying, in the moment, before recording the next bit. Additionally produce
-suggestedReplies: 1-3 groups, each covering one thing worth responding to in this clip, with:
+This is a SHORT BURST from a live casual conversation — the user recorded just what the OTHER
+PERSON said (never the user's own voice — every speaker in this transcript is someone the user
+needs to reply to) and needs help replying, in the moment, before recording the next bit.
+
+Additionally produce suggestedReplies. The clip may be a single remark, or the other person's turn
+may itself contain multiple points, a pause-and-continue, or more than one speaker (e.g. two other
+people talking, or one person responding to what another just said). Don't blend everything into
+one vague group — produce one group per distinct point that's worth a reply, in the order they
+happened, with the most recent one last (that's most likely what the user needs to respond to right
+now). If a group is clearly attributable to one speaker, name them in the context (e.g. "S2 asked
+whether..."). For each group:
 - context: a brief bilingual paraphrase of what's being responded to
 - options: 2-4 natural, casual (not overly formal/keigo) Japanese replies the user could say back,
   each with japanese text, romaji (the user cannot read Japanese, romaji is how they'll pronounce it
