@@ -61,41 +61,79 @@ export async function runSession(params: {
       speaker: l.speaker,
       japanese: l.text,
     }));
+    const participants = Array.from(new Set(linesWithIds.map((l) => l.speaker)));
 
-    const llm = params.useSample ? mockAnalysisProvider : getAnalysisProvider();
-    const analysis = await llm.analyze(analysisInput, params.mode);
+    // Transcription already succeeded and already cost real money — a
+    // translation/analysis failure past this point shouldn't throw that
+    // away. Handled as its own inner try/catch (rather than falling into
+    // the outer one below) so we can still assemble and save a report
+    // containing the raw transcript, just untranslated, instead of nothing.
+    try {
+      const llm = params.useSample ? mockAnalysisProvider : getAnalysisProvider();
+      const analysis = await llm.analyze(analysisInput, params.mode);
 
-    const englishById = new Map(analysis.transcriptEnglish.map((t) => [t.id, t.english]));
-    const transcript: TranscriptLine[] = linesWithIds.map((l) => ({
-      id: l.id,
-      speaker: l.speaker,
-      startMs: l.startMs,
-      endMs: l.endMs,
-      japanese: l.text,
-      english: englishById.get(l.id) ?? "",
-    }));
+      const englishById = new Map(analysis.transcriptEnglish.map((t) => [t.id, t.english]));
+      const transcript: TranscriptLine[] = linesWithIds.map((l) => ({
+        id: l.id,
+        speaker: l.speaker,
+        startMs: l.startMs,
+        endMs: l.endMs,
+        japanese: l.text,
+        english: englishById.get(l.id) ?? "",
+      }));
 
-    const participants = Array.from(new Set(transcript.map((l) => l.speaker)));
+      const report: MeetingReport = {
+        title: analysis.title,
+        mode: params.mode,
+        durationMs: transcription.durationMs,
+        recordedAt: session.createdAt,
+        participants,
+        executiveSummary: analysis.executiveSummary,
+        keyTopics: analysis.keyTopics,
+        actionItems: analysis.actionItems,
+        recommendations: analysis.recommendations,
+        glossary: analysis.glossary,
+        culturalNotes: analysis.culturalNotes,
+        transcript,
+        suggestedReplies: analysis.suggestedReplies,
+      };
 
-    const report: MeetingReport = {
-      title: analysis.title,
-      mode: params.mode,
-      durationMs: transcription.durationMs,
-      recordedAt: session.createdAt,
-      participants,
-      executiveSummary: analysis.executiveSummary,
-      keyTopics: analysis.keyTopics,
-      actionItems: analysis.actionItems,
-      recommendations: analysis.recommendations,
-      glossary: analysis.glossary,
-      culturalNotes: analysis.culturalNotes,
-      transcript,
-      suggestedReplies: analysis.suggestedReplies,
-    };
+      session.status = "ready";
+      session.title = report.title.en;
+      session.report = report;
+    } catch (analysisErr) {
+      const message = analysisErr instanceof Error ? analysisErr.message : String(analysisErr);
+      session.status = "error";
+      session.errorMessage = `Transcription succeeded, but translation/analysis failed: ${message}`;
+      session.report = {
+        title: {
+          ja: "文字起こしのみ（分析エラー）",
+          en: "Transcript only (translation/analysis failed)",
+        },
+        mode: params.mode,
+        durationMs: transcription.durationMs,
+        recordedAt: session.createdAt,
+        participants,
+        executiveSummary: {
+          ja: ["翻訳・分析に失敗しましたが、文字起こし自体は完了しています。下記をご確認ください。"],
+          en: ["Translation/analysis failed, but the transcription itself succeeded — see below."],
+        },
+        keyTopics: [],
+        actionItems: [],
+        recommendations: [],
+        glossary: [],
+        culturalNotes: [],
+        transcript: linesWithIds.map((l) => ({
+          id: l.id,
+          speaker: l.speaker,
+          startMs: l.startMs,
+          endMs: l.endMs,
+          japanese: l.text,
+          english: "[translation unavailable]",
+        })),
+      };
+    }
 
-    session.status = "ready";
-    session.title = report.title.en;
-    session.report = report;
     await saveSession(session);
   } catch (err) {
     session.status = "error";
