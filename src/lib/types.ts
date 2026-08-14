@@ -79,16 +79,6 @@ export interface MeetingReport {
   suggestedReplies?: SuggestedReplyGroup[];
 }
 
-export interface QuotaSnapshot {
-  sttProvider: string;
-  sttMinutesUsedThisMonth: number;
-  sttMinutesCapThisMonth: number;
-  llmRequestsUsedToday: number;
-  llmRequestsCapToday: number;
-  periodStart: string;
-  warning?: string;
-}
-
 export interface Session {
   id: string;
   createdAt: string;
@@ -99,4 +89,11 @@ export interface Session {
   audioFile?: string;
   errorMessage?: string;
   report?: MeetingReport;
+  /**
+   * Estimated USD cost of this session's Gemini calls, from real token
+   * usage the API reports per call — not exact billing (STT cost isn't
+   * included, and per-model pricing is a maintained lookup table, not
+   * fetched live), but grounded in real usage rather than guessed.
+   */
+  estimatedCostUsd?: number;
 }

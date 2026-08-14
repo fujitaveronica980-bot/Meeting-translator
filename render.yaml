@@ -15,6 +15,11 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      # Optional — shows a spend-vs-budget bar in the sidebar. Baked in at
+      # build time (NEXT_PUBLIC_ prefix), so set it before deploying/
+      # rebuilding, not just at runtime. See .env.example.
+      - key: NEXT_PUBLIC_GEMINI_BUDGET_JPY
+        sync: false
       # Optional Firestore persistence — set all three, or leave unset to
       # keep the current in-memory-only behavior. See .env.example.
       - key: FIREBASE_PROJECT_ID

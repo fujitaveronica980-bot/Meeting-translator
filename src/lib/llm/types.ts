@@ -35,6 +35,8 @@ export interface AnalysisResult {
   culturalNotes: CulturalNote[];
   /** Casual mode only — providers should return [] for meeting/seminar. */
   suggestedReplies?: SuggestedReplyGroup[];
+  /** Real-usage-based estimate; mock provider omits it (no real cost). */
+  estimatedCostUsd?: number;
 }
 
 export interface AnalysisProvider {

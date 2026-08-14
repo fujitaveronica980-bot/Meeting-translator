@@ -1,4 +1,4 @@
-import { ApiError, GoogleGenAI, Type } from "@google/genai";
+import { ApiError, GoogleGenAI, Type, type GenerateContentResponse } from "@google/genai";
 import type { SessionMode } from "@/lib/types";
 import type {
   AnalysisInputLine,
@@ -247,6 +247,35 @@ function parseJson<T>(text: string | undefined, context: string, finishReason?: 
   }
 }
 
+// USD per 1M tokens. Not fetched live — a maintained estimate, so this is a
+// "roughly how much" figure, not exact billing (check
+// https://ai.google.dev/gemini-api/docs/pricing for that). Ordered most-
+// specific first since e.g. "2.5-flash-lite" also contains "2.5-flash".
+const PRICING_PER_MILLION_TOKENS: { match: string; input: number; output: number }[] = [
+  { match: "3.5-flash-lite", input: 0.3, output: 2.5 },
+  { match: "3.1-flash-lite", input: 0.25, output: 1.5 },
+  { match: "2.5-flash-lite", input: 0.1, output: 0.4 },
+  { match: "flash-lite", input: 0.25, output: 1.5 },
+  { match: "3.7-flash", input: 0.75, output: 3.75 },
+  { match: "3.6-flash", input: 0.75, output: 3.75 },
+  { match: "3.5-flash", input: 1.5, output: 9.0 },
+  { match: "2.5-flash", input: 0.3, output: 2.5 },
+  { match: "flash", input: 0.75, output: 3.75 },
+];
+
+function estimateCostUsd(response: GenerateContentResponse): number {
+  const usage = response.usageMetadata;
+  if (!usage) return 0;
+  const modelVersion = response.modelVersion || "";
+  const pricing =
+    PRICING_PER_MILLION_TOKENS.find((p) => modelVersion.includes(p.match)) ??
+    PRICING_PER_MILLION_TOKENS.find((p) => p.match === "flash-lite")!;
+
+  const inputTokens = usage.promptTokenCount ?? 0;
+  const outputTokens = (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0);
+  return (inputTokens / 1_000_000) * pricing.input + (outputTokens / 1_000_000) * pricing.output;
+}
+
 // Chunk size chosen so a single translation call's output stays small and
 // fast regardless of how long the overall meeting is; concurrency bounds
 // how many chunks are in flight at once so a long meeting doesn't fire off
@@ -259,7 +288,7 @@ async function translateChunk(
   model: string,
   chunk: AnalysisInputLine[],
   mode: SessionMode
-): Promise<{ id: string; english: string }[]> {
+): Promise<{ translations: { id: string; english: string }[]; costUsd: number }> {
   const response = await generateWithRetry(ai, {
     model,
     contents: [{ role: "user", parts: [{ text: JSON.stringify(chunk) }] }],
@@ -274,7 +303,7 @@ async function translateChunk(
     "a translation chunk",
     response.candidates?.[0]?.finishReason
   );
-  return parsed.translations;
+  return { translations: parsed.translations, costUsd: estimateCostUsd(response) };
 }
 
 async function translateAll(
@@ -282,24 +311,27 @@ async function translateAll(
   model: string,
   lines: AnalysisInputLine[],
   mode: SessionMode
-): Promise<{ id: string; english: string }[]> {
+): Promise<{ translations: { id: string; english: string }[]; costUsd: number }> {
   const chunks: AnalysisInputLine[][] = [];
   for (let i = 0; i < lines.length; i += TRANSLATE_CHUNK_SIZE) {
     chunks.push(lines.slice(i, i + TRANSLATE_CHUNK_SIZE));
   }
 
   const results: { id: string; english: string }[][] = new Array(chunks.length);
+  let costUsd = 0;
   let nextIndex = 0;
   async function worker() {
     while (nextIndex < chunks.length) {
       const i = nextIndex++;
-      results[i] = await translateChunk(ai, model, chunks[i], mode);
+      const chunkResult = await translateChunk(ai, model, chunks[i], mode);
+      results[i] = chunkResult.translations;
+      costUsd += chunkResult.costUsd;
     }
   }
   const workerCount = Math.min(TRANSLATE_CONCURRENCY, chunks.length);
   await Promise.all(Array.from({ length: workerCount }, worker));
 
-  return results.flat();
+  return { translations: results.flat(), costUsd };
 }
 
 async function analyzeMeeting(
@@ -307,7 +339,7 @@ async function analyzeMeeting(
   model: string,
   lines: AnalysisInputLine[],
   mode: SessionMode
-): Promise<Omit<AnalysisResult, "transcriptEnglish">> {
+): Promise<{ analysis: Omit<AnalysisResult, "transcriptEnglish" | "estimatedCostUsd">; costUsd: number }> {
   const response = await generateWithRetry(ai, {
     model,
     contents: [{ role: "user", parts: [{ text: JSON.stringify(lines) }] }],
@@ -317,7 +349,12 @@ async function analyzeMeeting(
       responseSchema: buildAnalysisSchema(mode),
     },
   });
-  return parseJson(response.text, "the meeting analysis", response.candidates?.[0]?.finishReason);
+  const analysis = parseJson<Omit<AnalysisResult, "transcriptEnglish" | "estimatedCostUsd">>(
+    response.text,
+    "the meeting analysis",
+    response.candidates?.[0]?.finishReason
+  );
+  return { analysis, costUsd: estimateCostUsd(response) };
 }
 
 export const geminiAnalysisProvider: AnalysisProvider = {
@@ -332,11 +369,15 @@ export const geminiAnalysisProvider: AnalysisProvider = {
     const ai = new GoogleGenAI({ apiKey });
     const model = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
 
-    const [transcriptEnglish, analysis] = await Promise.all([
+    const [translation, meeting] = await Promise.all([
       translateAll(ai, model, lines, mode),
       analyzeMeeting(ai, model, lines, mode),
     ]);
 
-    return { ...analysis, transcriptEnglish };
+    return {
+      ...meeting.analysis,
+      transcriptEnglish: translation.translations,
+      estimatedCostUsd: translation.costUsd + meeting.costUsd,
+    };
   },
 };

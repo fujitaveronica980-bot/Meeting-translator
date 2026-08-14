@@ -101,6 +101,7 @@ export async function runSession(params: {
       session.status = "ready";
       session.title = report.title.en;
       session.report = report;
+      session.estimatedCostUsd = analysis.estimatedCostUsd;
     } catch (analysisErr) {
       const message = analysisErr instanceof Error ? analysisErr.message : String(analysisErr);
       session.status = "error";

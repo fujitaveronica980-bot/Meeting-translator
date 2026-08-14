@@ -187,6 +187,18 @@ export default function Home() {
 
   const selected = recordings.find((r) => r.id === selectedId) ?? null;
 
+  // Real-usage-based estimate (see gemini.ts), summed across whatever's
+  // currently loaded in the sidebar — not exact billing, but grounded in
+  // actual token counts rather than guessed. STT cost isn't included.
+  const totalCostUsd = recordings.reduce((sum, r) => sum + (r.session?.estimatedCostUsd ?? 0), 0);
+  // Approximate — set for a rough JPY conversion, not a live exchange rate.
+  const USD_TO_JPY = 150;
+  const budgetJpy = process.env.NEXT_PUBLIC_GEMINI_BUDGET_JPY
+    ? Number(process.env.NEXT_PUBLIC_GEMINI_BUDGET_JPY)
+    : null;
+  const costJpy = totalCostUsd * USD_TO_JPY;
+  const budgetPct = budgetJpy ? Math.min(100, (costJpy / budgetJpy) * 100) : null;
+
   // Pull the result panel into view whenever the selected entry changes —
   // covers both "just submitted something" and "clicked an older entry".
   useEffect(() => {
@@ -351,6 +363,32 @@ export default function Home() {
 
         <aside className="flex flex-col gap-3 lg:sticky lg:top-12 lg:self-start">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Recordings</h2>
+
+          {totalCostUsd > 0 && (
+            <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface p-3 text-xs">
+              <div className="flex items-baseline justify-between">
+                <span className="text-muted">Estimated Gemini spend</span>
+                <span className="font-medium text-foreground">${totalCostUsd.toFixed(4)}</span>
+              </div>
+              {budgetJpy && budgetPct !== null && (
+                <>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-subtle">
+                    <div
+                      className="h-full rounded-full bg-accent transition-[width]"
+                      style={{ width: `${budgetPct}%` }}
+                    />
+                  </div>
+                  <p className="text-muted">
+                    ~¥{costJpy.toFixed(0)} of ¥{budgetJpy.toLocaleString()} ({budgetPct.toFixed(1)}%)
+                  </p>
+                </>
+              )}
+              <p className="text-muted/70">
+                Estimate from real token usage — not exact billing, and doesn&apos;t include STT cost.
+              </p>
+            </div>
+          )}
+
           {recordings.length === 0 ? (
             <p className="text-sm text-muted/80">
               Nothing yet — recordings, uploads, and the sample all show up here as you make them.
