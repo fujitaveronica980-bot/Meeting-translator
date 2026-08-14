@@ -6,7 +6,7 @@ import type { SessionMode } from "@/lib/types";
 const VALID_MODES: SessionMode[] = ["seminar", "meeting", "casual"];
 
 export async function GET() {
-  return NextResponse.json({ sessions: listSessions() });
+  return NextResponse.json({ sessions: await listSessions() });
 }
 
 export async function POST(req: NextRequest) {

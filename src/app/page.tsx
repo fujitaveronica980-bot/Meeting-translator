@@ -59,6 +59,35 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Restore past sessions on load, when persistence is configured server-
+  // side — otherwise this just returns an empty list and the sidebar starts
+  // fresh like before. Audio isn't persisted, so restored entries have no
+  // player/retry (no file to retry with) — just the report itself.
+  useEffect(() => {
+    fetch("/api/sessions")
+      .then((res) => res.json())
+      .then((data: { sessions: Session[] }) => {
+        setRecordings((prev) => [
+          ...prev,
+          ...data.sessions.map(
+            (s): RecordingEntry => ({
+              id: s.id,
+              createdAt: new Date(s.createdAt).getTime(),
+              mode: s.mode,
+              kind: "upload",
+              label: s.title || s.audioFile || "Recording",
+              file: null,
+              audioUrl: null,
+              status: s.status === "ready" ? "ready" : s.status === "error" ? "error" : "processing",
+              session: s,
+              errorMessage: s.errorMessage ?? null,
+            })
+          ),
+        ]);
+      })
+      .catch((err) => console.error("Failed to load session history:", err));
+  }, []);
+
   const updateEntry = useCallback((id: string, patch: Partial<RecordingEntry>) => {
     setRecordings((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }, []);
@@ -137,6 +166,11 @@ export default function Home() {
       return prev.filter((r) => r.id !== entryId);
     });
     setSelectedId((prev) => (prev === entryId ? null : prev));
+    // Sessions persist server-side now (when configured) — delete there too,
+    // or it'd just reappear next time history is loaded.
+    fetch(`/api/sessions/${entryId}`, { method: "DELETE" }).catch((err) =>
+      console.error("Failed to delete session:", err)
+    );
   }, []);
 
   // Recording auto-submits on stop: turn it on at the start of the seminar,
@@ -291,13 +325,16 @@ export default function Home() {
             {selected?.status === "error" && (
               <div className="flex flex-col gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400">
                 <span>{selected.errorMessage}</span>
-                <button
-                  type="button"
-                  onClick={() => retry(selected.id)}
-                  className="self-start rounded-full border border-red-300 px-3 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900"
-                >
-                  Retry
-                </button>
+                {/* No file to retry with for a restored session — audio isn't persisted. */}
+                {(selected.file || selected.kind === "sample") && (
+                  <button
+                    type="button"
+                    onClick={() => retry(selected.id)}
+                    className="self-start rounded-full border border-red-300 px-3 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900"
+                  >
+                    Retry
+                  </button>
+                )}
               </div>
             )}
 

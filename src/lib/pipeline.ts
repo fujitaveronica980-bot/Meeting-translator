@@ -36,7 +36,7 @@ export async function runSession(params: {
     status: "transcribing",
     audioFile: params.filename,
   };
-  saveSession(session);
+  await saveSession(session);
 
   try {
     const stt = params.useSample ? mockProvider : getSttProvider();
@@ -53,7 +53,7 @@ export async function runSession(params: {
 
     session.status = "analyzing";
     session.audioDurationSec = Math.round(transcription.durationMs / 1000);
-    saveSession(session);
+    await saveSession(session);
 
     const analysisInput: AnalysisInputLine[] = linesWithIds.map((l) => ({
       id: l.id,
@@ -95,11 +95,11 @@ export async function runSession(params: {
     session.status = "ready";
     session.title = report.title.en;
     session.report = report;
-    saveSession(session);
+    await saveSession(session);
   } catch (err) {
     session.status = "error";
     session.errorMessage = err instanceof Error ? err.message : String(err);
-    saveSession(session);
+    await saveSession(session);
   }
 
   return session;

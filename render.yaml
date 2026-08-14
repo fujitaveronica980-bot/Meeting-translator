@@ -15,6 +15,14 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      # Optional Firestore persistence — set all three, or leave unset to
+      # keep the current in-memory-only behavior. See .env.example.
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
       # Optional access gate — set this once real STT/Gemini billing is on
       # the line, so a stranger who finds the URL can't spend it. Unset =
       # fully public, same as today.
