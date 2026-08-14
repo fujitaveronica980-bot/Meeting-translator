@@ -19,7 +19,7 @@ import type { SttProvider, TranscribeOptions, TranscriptionResult, DiarizedSegme
 const REGION = process.env.SPEECHMATICS_REGION || "eu1";
 const BASE_URL = `https://${REGION}.asr.api.speechmatics.com/v2`;
 
-async function pollUntilDone(jobId: string, apiKey: string, timeoutMs = 10 * 60 * 1000): Promise<void> {
+async function pollUntilDone(jobId: string, apiKey: string, timeoutMs = 20 * 60 * 1000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const res = await fetch(`${BASE_URL}/jobs/${jobId}`, {

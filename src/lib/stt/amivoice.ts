@@ -32,7 +32,7 @@ interface AmiVoiceResult {
   segments?: AmiVoiceUtterance[];
 }
 
-async function pollUntilDone(sessionId: string, apiKey: string, timeoutMs = 10 * 60 * 1000): Promise<AmiVoiceResult> {
+async function pollUntilDone(sessionId: string, apiKey: string, timeoutMs = 20 * 60 * 1000): Promise<AmiVoiceResult> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const res = await fetch(`${BASE_URL}/${sessionId}`, {
