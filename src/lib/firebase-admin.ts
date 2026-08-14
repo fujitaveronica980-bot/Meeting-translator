@@ -39,6 +39,16 @@ function getAdminApp(): App {
   return app;
 }
 
+let db: Firestore | null = null;
+
 export function getDb(): Firestore {
-  return getFirestore(getAdminApp());
+  if (db) return db;
+  db = getFirestore(getAdminApp());
+  // Session/MeetingReport have plenty of optional fields (audioFile, title,
+  // report, owner, dueHint, note, ...) that are `undefined` rather than
+  // omitted for a given session — plain JS/JSON treats that as "not set",
+  // but Firestore's SDK rejects `undefined` outright unless told otherwise.
+  // Must be set before any other Firestore call on this instance.
+  db.settings({ ignoreUndefinedProperties: true });
+  return db;
 }
