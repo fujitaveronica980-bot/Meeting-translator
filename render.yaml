@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: meeting-translator
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      # All optional — with none set the app runs fully on the built-in mock
+      # STT + mock analysis providers (zero cost, zero signup). Fill these in
+      # via the Render dashboard once you want real transcription/translation.
+      - key: AMIVOICE_API_KEY
+        sync: false
+      - key: SPEECHMATICS_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
