@@ -13,13 +13,16 @@ export async function POST(req: NextRequest) {
   const form = await req.formData();
   const mode = form.get("mode");
   const file = form.get("audio");
+  // Explicit flag rather than inferring "sample" from "no file attached" —
+  // that inference broke once real STT keys were configured: a real
+  // provider correctly rejects an empty audio buffer instead of silently
+  // ignoring it the way mock does.
+  const useSample = form.get("sample") === "true";
 
   const resolvedMode: SessionMode = VALID_MODES.includes(mode as SessionMode)
     ? (mode as SessionMode)
     : "meeting";
 
-  // No file is fine: the mock STT provider ignores audio content entirely,
-  // so this doubles as the app's zero-setup "try a sample recording" path.
   let audio = Buffer.alloc(0);
   let filename: string | undefined;
   let mimeType: string | undefined;
@@ -29,7 +32,7 @@ export async function POST(req: NextRequest) {
     mimeType = file.type || undefined;
   }
 
-  const session = await runSession({ audio, mode: resolvedMode, filename, mimeType });
+  const session = await runSession({ audio, mode: resolvedMode, filename, mimeType, useSample });
 
   return NextResponse.json(session, { status: session.status === "error" ? 502 : 200 });
 }

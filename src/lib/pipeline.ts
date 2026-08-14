@@ -1,6 +1,8 @@
 import { v4 as uuidv4 } from "uuid";
 import { getSttProvider } from "@/lib/stt";
+import { mockProvider } from "@/lib/stt/mock";
 import { getAnalysisProvider } from "@/lib/llm";
+import { mockAnalysisProvider } from "@/lib/llm/mock";
 import type { AnalysisInputLine } from "@/lib/llm";
 import type { MeetingReport, Session, SessionMode, TranscriptLine } from "@/lib/types";
 import { saveSession } from "@/lib/session-store";
@@ -17,6 +19,15 @@ export async function runSession(params: {
   mode: SessionMode;
   filename?: string;
   mimeType?: string;
+  /**
+   * The "Try sample recording" button: always forces the mock STT + mock
+   * analysis providers, regardless of which real providers are configured.
+   * There's no real audio behind the canned demo dialogue, so a real STT
+   * provider has nothing valid to transcribe — and even if there were,
+   * routing the fixed demo text through a real (paid) provider on every
+   * click would defeat the point of a free, zero-signup sample.
+   */
+  useSample?: boolean;
 }): Promise<Session> {
   const session: Session = {
     id: uuidv4(),
@@ -28,7 +39,7 @@ export async function runSession(params: {
   saveSession(session);
 
   try {
-    const stt = getSttProvider();
+    const stt = params.useSample ? mockProvider : getSttProvider();
     const transcription = await stt.transcribe(params.audio, {
       language: "ja",
       filename: params.filename,
@@ -50,7 +61,7 @@ export async function runSession(params: {
       japanese: l.text,
     }));
 
-    const llm = getAnalysisProvider();
+    const llm = params.useSample ? mockAnalysisProvider : getAnalysisProvider();
     const analysis = await llm.analyze(analysisInput, params.mode);
 
     const englishById = new Map(analysis.transcriptEnglish.map((t) => [t.id, t.english]));

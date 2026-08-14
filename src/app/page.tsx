@@ -69,7 +69,11 @@ export default function Home() {
       try {
         const form = new FormData();
         form.append("mode", entryMode);
-        if (!useSample && entryFile) form.append("audio", entryFile);
+        if (useSample) {
+          form.append("sample", "true");
+        } else if (entryFile) {
+          form.append("audio", entryFile);
+        }
 
         const res = await fetch("/api/sessions", { method: "POST", body: form });
         const data: Session = await res.json();
