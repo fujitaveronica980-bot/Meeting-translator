@@ -47,6 +47,21 @@ export interface CulturalNote {
   note: string;
 }
 
+export interface SuggestedReplyOption {
+  japanese: string;
+  /** Romanized pronunciation — needed since not everyone reads Japanese. */
+  romaji: string;
+  english: string;
+  /** Short usage note, e.g. "casual/friendly", "polite way to decline". */
+  nuance?: string;
+}
+
+export interface SuggestedReplyGroup {
+  /** Brief bilingual paraphrase of what's being responded to. */
+  context: Bilingual;
+  options: SuggestedReplyOption[];
+}
+
 export interface MeetingReport {
   title: Bilingual;
   mode: SessionMode;
@@ -60,6 +75,8 @@ export interface MeetingReport {
   glossary: GlossaryTerm[];
   culturalNotes: CulturalNote[];
   transcript: TranscriptLine[];
+  /** Casual mode only: example replies you could give back, in the moment. */
+  suggestedReplies?: SuggestedReplyGroup[];
 }
 
 export interface QuotaSnapshot {

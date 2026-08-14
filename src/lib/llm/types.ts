@@ -4,6 +4,8 @@ import type {
   CulturalNote,
   GlossaryTerm,
   KeyTopic,
+  SessionMode,
+  SuggestedReplyGroup,
 } from "@/lib/types";
 
 /**
@@ -31,9 +33,16 @@ export interface AnalysisResult {
   recommendations: Bilingual[];
   glossary: GlossaryTerm[];
   culturalNotes: CulturalNote[];
+  /** Casual mode only — providers should return [] for meeting/seminar. */
+  suggestedReplies?: SuggestedReplyGroup[];
 }
 
 export interface AnalysisProvider {
   name: string;
-  analyze(lines: AnalysisInputLine[]): Promise<AnalysisResult>;
+  /**
+   * `mode` matters beyond labeling: it should also steer translation/analysis
+   * register (casual conversation vs. business meeting) and, for "casual",
+   * enables suggestedReplies generation.
+   */
+  analyze(lines: AnalysisInputLine[], mode: SessionMode): Promise<AnalysisResult>;
 }

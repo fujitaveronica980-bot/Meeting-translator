@@ -1,4 +1,5 @@
 import { ApiError, GoogleGenAI, Type } from "@google/genai";
+import type { SessionMode } from "@/lib/types";
 import type {
   AnalysisInputLine,
   AnalysisProvider,
@@ -31,6 +32,12 @@ import type {
  * echoes the transcript back, so its output also stays small regardless of
  * length; it runs in parallel with translation since neither depends on the
  * other's output.
+ *
+ * `mode` steers both calls: translation/analysis register adapts to a
+ * casual conversation vs. a business meeting, and "casual" additionally
+ * requests suggestedReplies — example things you could say back, meant for
+ * short recorded bursts during a live conversation rather than post-hoc
+ * meeting review.
  */
 
 const bilingualSchema = {
@@ -39,9 +46,32 @@ const bilingualSchema = {
   required: ["ja", "en"],
 };
 
-const analysisSchema = {
-  type: Type.OBJECT,
-  properties: {
+const suggestedRepliesSchema = {
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      context: bilingualSchema,
+      options: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            japanese: { type: Type.STRING },
+            romaji: { type: Type.STRING },
+            english: { type: Type.STRING },
+            nuance: { type: Type.STRING },
+          },
+          required: ["japanese", "romaji", "english"],
+        },
+      },
+    },
+    required: ["context", "options"],
+  },
+};
+
+function buildAnalysisSchema(mode: SessionMode) {
+  const properties: Record<string, unknown> = {
     title: bilingualSchema,
     executiveSummary: {
       type: Type.OBJECT,
@@ -99,8 +129,9 @@ const analysisSchema = {
         required: ["quote", "note"],
       },
     },
-  },
-  required: [
+  };
+
+  const required = [
     "title",
     "executiveSummary",
     "keyTopics",
@@ -108,22 +139,52 @@ const analysisSchema = {
     "recommendations",
     "glossary",
     "culturalNotes",
-  ],
-};
+  ];
 
-const ANALYSIS_SYSTEM_PROMPT = `You are a professional Japanese business meeting analyst.
-You will receive a diarized Japanese meeting transcript as a JSON array of {id, speaker, japanese} lines.
-Do not reproduce the transcript in your response. Instead, analyze the whole meeting and produce:
+  // Only requested (and only counted in output tokens) for casual mode —
+  // meeting/seminar schema/cost stay exactly as before.
+  if (mode === "casual") {
+    properties.suggestedReplies = suggestedRepliesSchema;
+    required.push("suggestedReplies");
+  }
+
+  return { type: Type.OBJECT, properties, required };
+}
+
+function buildAnalysisPrompt(mode: SessionMode): string {
+  const context =
+    mode === "casual"
+      ? "an informal conversation between friends or acquaintances"
+      : "a Japanese business meeting";
+
+  let prompt = `You are a professional Japanese conversation analyst.
+You will receive a diarized transcript of ${context} as a JSON array of {id, speaker, japanese} lines.
+Do not reproduce the transcript in your response. Instead, analyze it and produce:
 - a short bilingual title
 - a bilingual executive summary (3-5 bullet points each language)
 - key topics with approximate start/end times in milliseconds inferred from line order and speaker turns
-- action items with an owner when identifiable from context
-- concrete recommendations
-- a glossary of business/domain terms worth flagging for a non-native speaker, with furigana-style reading and translation
+- action items with an owner when identifiable from context (leave empty if this doesn't apply, e.g. casual chat)
+- concrete recommendations (or conversational suggestions, if casual)
+- a glossary of notable terms worth flagging for a non-native speaker, with furigana-style reading and translation
 - cultural notes: places where the phrasing carries implicit meaning (softened refusals, indirectness,
-  honorifics, etc.) that a non-Japanese reader could easily miss, with a short quote and explanation
+  honorifics, etc.) that a non-Japanese reader could easily miss, with a short quote and explanation`;
 
-Respond only with JSON matching the provided schema.`;
+  if (mode === "casual") {
+    prompt += `
+
+This is a SHORT BURST from a live casual conversation — the user recorded just what the other person
+said and needs help replying, in the moment, before recording the next bit. Additionally produce
+suggestedReplies: 1-3 groups, each covering one thing worth responding to in this clip, with:
+- context: a brief bilingual paraphrase of what's being responded to
+- options: 2-4 natural, casual (not overly formal/keigo) Japanese replies the user could say back,
+  each with japanese text, romaji (the user cannot read Japanese, romaji is how they'll pronounce it
+  out loud), an English gloss, and an optional short nuance note (e.g. "casual/friendly", "polite way
+  to decline") to help them pick the right one for the moment.`;
+  }
+
+  prompt += "\n\nRespond only with JSON matching the provided schema.";
+  return prompt;
+}
 
 const translationSchema = {
   type: Type.OBJECT,
@@ -140,11 +201,19 @@ const translationSchema = {
   required: ["translations"],
 };
 
-const TRANSLATION_SYSTEM_PROMPT = `You are a professional Japanese-to-English business interpreter.
-You will receive a JSON array of {id, speaker, japanese} lines from one meeting.
+function buildTranslationPrompt(mode: SessionMode): string {
+  const context =
+    mode === "casual"
+      ? "a casual, informal conversation between friends or acquaintances"
+      : "one business meeting";
+
+  return `You are a professional Japanese-to-English interpreter.
+You will receive a JSON array of {id, speaker, japanese} lines from ${context}.
 For each line, produce a natural, accurate English translation (translate meaning and register,
-not word-for-word). Do not alter or omit any line — return exactly one translation per input id.
+not word-for-word — keep it casual/conversational if the source is casual, not stiffly formal).
+Do not alter or omit any line — return exactly one translation per input id.
 Respond only with JSON matching the provided schema.`;
+}
 
 // The free tier occasionally returns 503 ("high demand, try again later") or
 // 429 (rate limited) — both are transient and worth a couple of retries
@@ -188,13 +257,14 @@ const TRANSLATE_CONCURRENCY = 3;
 async function translateChunk(
   ai: GoogleGenAI,
   model: string,
-  chunk: AnalysisInputLine[]
+  chunk: AnalysisInputLine[],
+  mode: SessionMode
 ): Promise<{ id: string; english: string }[]> {
   const response = await generateWithRetry(ai, {
     model,
     contents: [{ role: "user", parts: [{ text: JSON.stringify(chunk) }] }],
     config: {
-      systemInstruction: TRANSLATION_SYSTEM_PROMPT,
+      systemInstruction: buildTranslationPrompt(mode),
       responseMimeType: "application/json",
       responseSchema: translationSchema,
     },
@@ -210,7 +280,8 @@ async function translateChunk(
 async function translateAll(
   ai: GoogleGenAI,
   model: string,
-  lines: AnalysisInputLine[]
+  lines: AnalysisInputLine[],
+  mode: SessionMode
 ): Promise<{ id: string; english: string }[]> {
   const chunks: AnalysisInputLine[][] = [];
   for (let i = 0; i < lines.length; i += TRANSLATE_CHUNK_SIZE) {
@@ -222,7 +293,7 @@ async function translateAll(
   async function worker() {
     while (nextIndex < chunks.length) {
       const i = nextIndex++;
-      results[i] = await translateChunk(ai, model, chunks[i]);
+      results[i] = await translateChunk(ai, model, chunks[i], mode);
     }
   }
   const workerCount = Math.min(TRANSLATE_CONCURRENCY, chunks.length);
@@ -234,15 +305,16 @@ async function translateAll(
 async function analyzeMeeting(
   ai: GoogleGenAI,
   model: string,
-  lines: AnalysisInputLine[]
+  lines: AnalysisInputLine[],
+  mode: SessionMode
 ): Promise<Omit<AnalysisResult, "transcriptEnglish">> {
   const response = await generateWithRetry(ai, {
     model,
     contents: [{ role: "user", parts: [{ text: JSON.stringify(lines) }] }],
     config: {
-      systemInstruction: ANALYSIS_SYSTEM_PROMPT,
+      systemInstruction: buildAnalysisPrompt(mode),
       responseMimeType: "application/json",
-      responseSchema: analysisSchema,
+      responseSchema: buildAnalysisSchema(mode),
     },
   });
   return parseJson(response.text, "the meeting analysis", response.candidates?.[0]?.finishReason);
@@ -251,7 +323,7 @@ async function analyzeMeeting(
 export const geminiAnalysisProvider: AnalysisProvider = {
   name: "gemini",
 
-  async analyze(lines: AnalysisInputLine[]): Promise<AnalysisResult> {
+  async analyze(lines: AnalysisInputLine[], mode: SessionMode): Promise<AnalysisResult> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       throw new Error("GEMINI_API_KEY is not set");
@@ -261,8 +333,8 @@ export const geminiAnalysisProvider: AnalysisProvider = {
     const model = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
 
     const [transcriptEnglish, analysis] = await Promise.all([
-      translateAll(ai, model, lines),
-      analyzeMeeting(ai, model, lines),
+      translateAll(ai, model, lines, mode),
+      analyzeMeeting(ai, model, lines, mode),
     ]);
 
     return { ...analysis, transcriptEnglish };

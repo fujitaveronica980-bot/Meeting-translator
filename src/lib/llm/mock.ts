@@ -1,3 +1,4 @@
+import type { SessionMode } from "@/lib/types";
 import type { AnalysisInputLine, AnalysisProvider, AnalysisResult } from "./types";
 
 /**
@@ -30,7 +31,11 @@ const KNOWN_JAPANESE_TO_ENGLISH: Record<string, string> = {
 export const mockAnalysisProvider: AnalysisProvider = {
   name: "mock",
 
-  async analyze(lines: AnalysisInputLine[]): Promise<AnalysisResult> {
+  // `_mode` unused: the canned demo dialogue is a fixed business negotiation
+  // regardless of mode, so mock has no casual content to draw suggestedReplies
+  // from. Real casual-mode replies only come from the Gemini provider.
+  async analyze(lines: AnalysisInputLine[], _mode: SessionMode): Promise<AnalysisResult> {
+    void _mode;
     const isKnownDialogue = lines.every((l) => l.japanese in KNOWN_JAPANESE_TO_ENGLISH);
 
     const transcriptEnglish = lines.map((l) => ({

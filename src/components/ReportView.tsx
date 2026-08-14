@@ -33,6 +33,7 @@ function Bilingual({ ja, en }: { ja: string; en: string }) {
  * instead of every section looking identical.
  */
 const SECTION_STYLES = {
+  replies: { color: "#0891b2", icon: "reply" },
   summary: { color: "#d97706", icon: "list" },
   topics: { color: "#2563eb", icon: "bubble" },
   actions: { color: "#7c3aed", icon: "check" },
@@ -89,6 +90,12 @@ const ICONS = {
       <line x1="9" y1="20" x2="15" y2="20" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
     </>
   ),
+  reply: (
+    <>
+      <path d="M10 5 4 11l6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 11h9a5 5 0 0 1 5 5v2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </>
+  ),
 } as const;
 
 function Section({
@@ -140,6 +147,52 @@ export function ReportView({ report }: { report: MeetingReport }) {
           {report.mode} · {ms(report.durationMs)} · {report.participants.join(", ")}
         </p>
       </header>
+
+      {report.mode === "casual" && report.suggestedReplies && report.suggestedReplies.length > 0 && (
+        <Section title="Suggested Replies / 返信の候補" section="replies">
+          <div className="flex flex-col gap-4">
+            {report.suggestedReplies.map((group, i) => (
+              <div
+                key={i}
+                className="rounded-lg border-l-4 bg-surface p-3 shadow-sm"
+                style={{ borderColor: SECTION_STYLES.replies.color }}
+              >
+                <p className="mb-2 text-xs text-muted">
+                  <span className="font-medium text-foreground">{group.context.ja}</span>
+                  {" / "}
+                  {group.context.en}
+                </p>
+                <div className="flex flex-col gap-2">
+                  {group.options.map((opt, j) => (
+                    <div
+                      key={j}
+                      className="rounded-lg p-3"
+                      style={{ backgroundColor: `${SECTION_STYLES.replies.color}14` }}
+                    >
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                        <span className="text-base font-medium text-foreground">{opt.japanese}</span>
+                        {opt.nuance && (
+                          <span
+                            className="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium"
+                            style={{
+                              backgroundColor: `${SECTION_STYLES.replies.color}22`,
+                              color: SECTION_STYLES.replies.color,
+                            }}
+                          >
+                            {opt.nuance}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm italic text-muted">{opt.romaji}</p>
+                      <p className="text-sm text-muted">{opt.english}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
 
       <Section title="Executive Summary / 要約" section="summary">
         <ul className="flex flex-col gap-2">

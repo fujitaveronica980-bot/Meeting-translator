@@ -51,7 +51,7 @@ export async function runSession(params: {
     }));
 
     const llm = getAnalysisProvider();
-    const analysis = await llm.analyze(analysisInput);
+    const analysis = await llm.analyze(analysisInput, params.mode);
 
     const englishById = new Map(analysis.transcriptEnglish.map((t) => [t.id, t.english]));
     const transcript: TranscriptLine[] = linesWithIds.map((l) => ({
@@ -78,6 +78,7 @@ export async function runSession(params: {
       glossary: analysis.glossary,
       culturalNotes: analysis.culturalNotes,
       transcript,
+      suggestedReplies: analysis.suggestedReplies,
     };
 
     session.status = "ready";

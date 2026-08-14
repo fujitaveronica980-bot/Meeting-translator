@@ -17,6 +17,18 @@ export function reportToMarkdown(report: MeetingReport): string {
     ""
   );
 
+  if (report.mode === "casual" && report.suggestedReplies && report.suggestedReplies.length > 0) {
+    lines.push("## Suggested Replies / 返信の候補", "");
+    for (const group of report.suggestedReplies) {
+      lines.push(`**${group.context.ja} / ${group.context.en}**`, "");
+      for (const opt of group.options) {
+        const nuance = opt.nuance ? ` _(${opt.nuance})_` : "";
+        lines.push(`- ${opt.japanese} — _${opt.romaji}_ — ${opt.english}${nuance}`);
+      }
+      lines.push("");
+    }
+  }
+
   lines.push("## Executive Summary / 要約", "");
   report.executiveSummary.ja.forEach((ja, i) => {
     lines.push(`- ${ja}`, `  - ${report.executiveSummary.en[i] ?? ""}`);
