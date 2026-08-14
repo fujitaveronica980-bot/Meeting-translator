@@ -364,7 +364,7 @@ export default function Home() {
         <aside className="flex flex-col gap-3 lg:sticky lg:top-12 lg:self-start">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Recordings</h2>
 
-          {totalCostUsd > 0 && (
+          {(totalCostUsd > 0 || budgetJpy) && (
             <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface p-3 text-xs">
               <div className="flex items-baseline justify-between">
                 <span className="text-muted">Estimated Gemini spend</span>
