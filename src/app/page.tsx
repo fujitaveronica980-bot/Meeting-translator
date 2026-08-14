@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session, SessionMode } from "@/lib/types";
 import { ReportView } from "@/components/ReportView";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
@@ -23,6 +23,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const resultRef = useRef<HTMLDivElement | null>(null);
 
   const runPipeline = useCallback(
     async (opts: { file?: File | null; useSample?: boolean }) => {
@@ -42,6 +43,7 @@ export default function Home() {
         }
         setSession(data);
       } catch (err) {
+        console.error("Failed to process session:", err);
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         setLoading(false);
@@ -49,6 +51,16 @@ export default function Home() {
     },
     [mode]
   );
+
+  // The loading/error/report state can land well below the fold, especially
+  // right after a hands-off "record → auto-submit" flow where you're not
+  // already scrolled down. Pull it into view as soon as there's something to
+  // show, rather than leaving it easy to miss.
+  useEffect(() => {
+    if ((loading || session?.report || error) && resultRef.current) {
+      resultRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [loading, session, error]);
 
   // Recording auto-submits on stop: turn it on at the start of the seminar,
   // turn it off at the end, and processing kicks off immediately — no
@@ -173,19 +185,22 @@ export default function Home() {
           </p>
         </div>
 
-        {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400">
-            {error}
-          </div>
-        )}
+        <div ref={resultRef} className="flex flex-col gap-8 scroll-mt-6">
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400">
+              {error}
+            </div>
+          )}
 
-        {loading && (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Transcribing &amp; analyzing — this can take a while for real recordings…
-          </p>
-        )}
+          {loading && (
+            <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-zinc-400" />
+              Transcribing &amp; analyzing — this can take a while for real recordings…
+            </div>
+          )}
 
-        {session?.report && <ReportView report={session.report} />}
+          {session?.report && <ReportView report={session.report} />}
+        </div>
       </main>
     </div>
   );
