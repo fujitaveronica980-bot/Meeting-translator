@@ -126,6 +126,15 @@ export default function Home() {
     [recordings, submit]
   );
 
+  const deleteEntry = useCallback((entryId: string) => {
+    setRecordings((prev) => {
+      const entry = prev.find((r) => r.id === entryId);
+      if (entry?.audioUrl) URL.revokeObjectURL(entry.audioUrl);
+      return prev.filter((r) => r.id !== entryId);
+    });
+    setSelectedId((prev) => (prev === entryId ? null : prev));
+  }, []);
+
   // Recording auto-submits on stop: turn it on at the start of the seminar,
   // turn it off at the end, and processing kicks off immediately — no
   // separate "now click submit" step. The raw audio lands in the sidebar
@@ -303,15 +312,18 @@ export default function Home() {
           ) : (
             <ul className="flex flex-col gap-2">
               {recordings.map((r) => (
-                <li key={r.id}>
+                <li
+                  key={r.id}
+                  className={`group relative rounded-lg border text-sm transition-colors ${
+                    r.id === selectedId
+                      ? "border-accent bg-surface"
+                      : "border-border bg-surface hover:bg-subtle"
+                  }`}
+                >
                   <button
                     type="button"
                     onClick={() => setSelectedId(r.id)}
-                    className={`flex w-full flex-col gap-1 rounded-lg border p-3 text-left text-sm transition-colors ${
-                      r.id === selectedId
-                        ? "border-accent bg-surface"
-                        : "border-border bg-surface hover:bg-subtle"
-                    }`}
+                    className="flex w-full flex-col gap-1 p-3 pr-8 text-left"
                   >
                     <span className="truncate font-medium text-foreground">
                       {r.session?.report?.title.en || r.label}
@@ -337,6 +349,30 @@ export default function Home() {
                       )}
                       <span>· {new Date(r.createdAt).toLocaleTimeString()}</span>
                     </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm("Delete this recording? This can't be undone.")) {
+                        deleteEntry(r.id);
+                      }
+                    }}
+                    aria-label="Delete recording"
+                    title="Delete recording"
+                    className="absolute right-2 top-2 rounded-full p-1 text-muted opacity-0 transition-opacity hover:bg-red-100 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100 dark:hover:bg-red-950 dark:hover:text-red-400"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      className="h-4 w-4"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M8.75 1a.75.75 0 0 0-.75.75V3H4.5a.75.75 0 0 0 0 1.5h.322l.8 10.4A2.25 2.25 0 0 0 7.865 17h4.27a2.25 2.25 0 0 0 2.243-2.1l.8-10.4h.322a.75.75 0 0 0 0-1.5H12v-1.25a.75.75 0 0 0-.75-.75h-2.5ZM10 6a.75.75 0 0 1 .75.75v6.5a.75.75 0 0 1-1.5 0v-6.5A.75.75 0 0 1 10 6Zm-2.25.75a.75.75 0 0 0-1.5.058l.25 6.5a.75.75 0 1 0 1.5-.058l-.25-6.5Zm5-.692a.75.75 0 0 1 .692.808l-.25 6.5a.75.75 0 1 1-1.498-.058l.25-6.5a.75.75 0 0 1 .806-.75Z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
                   </button>
                 </li>
               ))}
