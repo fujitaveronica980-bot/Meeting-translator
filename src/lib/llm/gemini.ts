@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { ApiError, GoogleGenAI, Type } from "@google/genai";
 import type { AnalysisInputLine, AnalysisProvider, AnalysisResult } from "./types";
 
 /**
@@ -119,6 +119,27 @@ Do not alter the Japanese text. For each line, produce a natural, accurate Engli
 
 Respond only with JSON matching the provided schema.`;
 
+// The free tier occasionally returns 503 ("high demand, try again later") or
+// 429 (rate limited) — both are transient and worth a couple of retries
+// rather than failing the whole session outright.
+const RETRYABLE_STATUS = new Set([429, 503]);
+const RETRY_DELAYS_MS = [2000, 5000];
+
+async function generateWithRetry(
+  ai: GoogleGenAI,
+  params: Parameters<GoogleGenAI["models"]["generateContent"]>[0]
+) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await ai.models.generateContent(params);
+    } catch (err) {
+      const retryable = err instanceof ApiError && RETRYABLE_STATUS.has(err.status);
+      if (!retryable || attempt >= RETRY_DELAYS_MS.length) throw err;
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
 export const geminiAnalysisProvider: AnalysisProvider = {
   name: "gemini",
 
@@ -131,7 +152,7 @@ export const geminiAnalysisProvider: AnalysisProvider = {
     const ai = new GoogleGenAI({ apiKey });
     const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
 
-    const response = await ai.models.generateContent({
+    const response = await generateWithRetry(ai, {
       model,
       contents: [
         { role: "user", parts: [{ text: JSON.stringify(lines) }] },
