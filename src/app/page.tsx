@@ -234,7 +234,7 @@ export default function Home() {
                     type="button"
                     onClick={() => setMode(m.value)}
                     disabled={recorder.status === "recording"}
-                    className={`rounded-full px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                    className={`min-h-10 rounded-full px-3.5 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                       mode === m.value
                         ? "bg-accent text-accent-foreground"
                         : "bg-subtle text-muted hover:bg-border"
@@ -253,7 +253,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={recorder.stop}
-                    className="flex items-center gap-2 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700"
+                    className="flex min-h-11 items-center gap-2 rounded-full bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-red-700"
                   >
                     <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
                     Stop &amp; Process ({formatElapsed(recorder.elapsedSec)})
@@ -262,7 +262,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={recorder.start}
-                    className="flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-subtle"
+                    className="flex min-h-11 items-center gap-2 rounded-full border border-border px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-subtle"
                   >
                     <span className="h-2 w-2 rounded-full bg-red-500" />
                     Start Recording
@@ -407,7 +407,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setSelectedId(r.id)}
-                    className="flex w-full flex-col gap-1 p-3 pr-8 text-left"
+                    className="flex w-full flex-col gap-1 p-3 pr-12 text-left"
                   >
                     <span className="truncate font-medium text-foreground">
                       {r.session?.report?.title.en || r.label}
@@ -443,7 +443,7 @@ export default function Home() {
                     }}
                     aria-label="Delete recording"
                     title="Delete recording"
-                    className="absolute right-2 top-2 rounded-full p-1 text-muted opacity-0 transition-opacity hover:bg-red-100 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100 dark:hover:bg-red-950 dark:hover:text-red-400"
+                    className="absolute right-1 top-1 flex h-10 w-10 items-center justify-center rounded-full text-muted opacity-60 transition-opacity hover:bg-red-100 hover:text-red-600 hover:opacity-100 focus-visible:opacity-100 group-hover:opacity-100 dark:hover:bg-red-950 dark:hover:text-red-400"
                   >
                     <svg
                       xmlns="http://www.w3.org/2000/svg"

@@ -138,7 +138,7 @@ export function ReportView({ report }: { report: MeetingReport }) {
           <button
             type="button"
             onClick={() => downloadReport(report)}
-            className="shrink-0 rounded-full border border-border px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-subtle"
+            className="min-h-11 shrink-0 rounded-full border border-border px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-subtle"
           >
             Download report
           </button>
