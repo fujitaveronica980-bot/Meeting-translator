@@ -1,4 +1,15 @@
 import type { MeetingReport } from "@/lib/types";
+import { reportFilename, reportToMarkdown } from "@/lib/reportToMarkdown";
+
+function downloadReport(report: MeetingReport) {
+  const blob = new Blob([reportToMarkdown(report)], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = reportFilename(report, "md");
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 function ms(msTotal: number): string {
   const totalSec = Math.round(msTotal / 1000);
@@ -31,10 +42,21 @@ export function ReportView({ report }: { report: MeetingReport }) {
   return (
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">
-          {report.title.ja}
-        </h1>
-        <p className="text-lg text-zinc-500 dark:text-zinc-400">{report.title.en}</p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">
+              {report.title.ja}
+            </h1>
+            <p className="text-lg text-zinc-500 dark:text-zinc-400">{report.title.en}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => downloadReport(report)}
+            className="shrink-0 rounded-full border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          >
+            Download report
+          </button>
+        </div>
         <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
           {report.mode} · {ms(report.durationMs)} · {report.participants.join(", ")}
         </p>
