@@ -10,7 +10,11 @@ import type { AnalysisInputLine, AnalysisProvider, AnalysisResult } from "./type
  * — no card required for the free tier as of 2026, but check the current
  * rate/quota limits in AI Studio since they've changed before.
  *
- * Model defaults to gemini-2.5-flash; override with GEMINI_MODEL if needed.
+ * Model defaults to the "gemini-flash-latest" alias rather than a pinned
+ * version (e.g. gemini-2.5-flash) — pinned versions get retired for new API
+ * keys over time ("this model is no longer available to new users"), while
+ * the -latest alias always tracks Google's current recommended flash model.
+ * Override with GEMINI_MODEL if you want a specific pinned version instead.
  */
 
 const bilingualSchema = {
@@ -125,7 +129,7 @@ export const geminiAnalysisProvider: AnalysisProvider = {
     }
 
     const ai = new GoogleGenAI({ apiKey });
-    const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
 
     const response = await ai.models.generateContent({
       model,
