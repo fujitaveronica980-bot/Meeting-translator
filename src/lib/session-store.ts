@@ -1,7 +1,21 @@
 import type { Session } from "@/lib/types";
+import type { DiarizedSegment } from "@/lib/stt";
 import { getDb, isFirestoreConfigured } from "@/lib/firebase-admin";
 
 const COLLECTION = "sessions";
+// Transcripts live apart from their session: a session is loaded on every
+// page view and status check, and an hour of transcript would ride along
+// each time — and count toward the session document's size limit.
+const TRANSCRIPTS = "transcripts";
+// Firestore caps a document at 1 MiB; leave headroom rather than fail a save.
+const MAX_TRANSCRIPT_CHARS = 900_000;
+
+export interface StoredTranscript {
+  segments: DiarizedSegment[];
+  durationMs: number;
+  /** From the "Try sample recording" button — re-analysis must stay on the mock provider. */
+  sample: boolean;
+}
 // Bounds Firestore read cost/latency as history grows over time, rather
 // than fetching every session ever made on every page load.
 const LIST_LIMIT = 50;
@@ -18,10 +32,33 @@ const LIST_LIMIT = 50;
 
 const globalForStore = globalThis as unknown as {
   __meetingTranslatorSessions?: Map<string, Session>;
+  __meetingTranslatorTranscripts?: Map<string, StoredTranscript>;
 };
 const memoryStore =
   globalForStore.__meetingTranslatorSessions ?? new Map<string, Session>();
 globalForStore.__meetingTranslatorSessions = memoryStore;
+const memoryTranscripts =
+  globalForStore.__meetingTranslatorTranscripts ?? new Map<string, StoredTranscript>();
+globalForStore.__meetingTranslatorTranscripts = memoryTranscripts;
+
+export async function saveTranscript(id: string, transcript: StoredTranscript): Promise<void> {
+  if (isFirestoreConfigured()) {
+    if (JSON.stringify(transcript).length > MAX_TRANSCRIPT_CHARS) {
+      throw new Error("Transcript is too large to store");
+    }
+    await getDb().collection(TRANSCRIPTS).doc(id).set(transcript);
+    return;
+  }
+  memoryTranscripts.set(id, transcript);
+}
+
+export async function getTranscript(id: string): Promise<StoredTranscript | undefined> {
+  if (isFirestoreConfigured()) {
+    const doc = await getDb().collection(TRANSCRIPTS).doc(id).get();
+    return doc.exists ? (doc.data() as StoredTranscript) : undefined;
+  }
+  return memoryTranscripts.get(id);
+}
 
 export async function saveSession(session: Session): Promise<void> {
   if (isFirestoreConfigured()) {
@@ -66,9 +103,11 @@ export async function getSession(id: string): Promise<Session | undefined> {
 export async function deleteSession(id: string): Promise<void> {
   if (isFirestoreConfigured()) {
     await getDb().collection(COLLECTION).doc(id).delete();
+    await getDb().collection(TRANSCRIPTS).doc(id).delete();
     return;
   }
   memoryStore.delete(id);
+  memoryTranscripts.delete(id);
 }
 
 export async function listSessions(): Promise<Session[]> {

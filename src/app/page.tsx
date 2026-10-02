@@ -196,7 +196,13 @@ export default function Home() {
           });
         } else {
           failures = latest ? 0 : failures + 1;
-          if (!fatal && Date.now() - startedAt > STALE_AFTER_MS) {
+          // Measured from the last sign of life, not just creation: an old
+          // recording being re-analyzed is not stale for being old.
+          const lastAlive = Math.max(
+            startedAt,
+            latest?.heartbeatAt ? new Date(latest.heartbeatAt).getTime() : 0
+          );
+          if (!fatal && Date.now() - lastAlive > STALE_AFTER_MS) {
             fatal = "Processing was interrupted before it finished. Please try again.";
           }
           if (!fatal) {
@@ -342,6 +348,34 @@ export default function Home() {
       submit(entryId, entry.mode, entry.file, entry.kind === "sample", reader);
     },
     [recordings, reader, submit]
+  );
+
+  // Rebuilds the report from the transcript the server kept — no upload, no
+  // transcription cost. Picks up the current "Who are you" value.
+  const reanalyze = useCallback(
+    async (entryId: string) => {
+      const entry = recordings.find((r) => r.id === entryId);
+      if (!entry?.session) return;
+      activePolls.current.delete(entryId);
+      updateEntry(entryId, { status: "processing", errorMessage: null, unreachable: false });
+      try {
+        const res = await fetch(`/api/sessions/${entry.session.id}/reanalyze`, {
+          method: "POST",
+          headers: reader.trim() ? { "X-Reader": encodeURIComponent(reader.trim()) } : undefined,
+        });
+        const data = await readJson<Session & { error?: string }>(res);
+        if (!res.ok) throw new Error(data.error || "Could not start the re-analysis.");
+        updateEntry(entryId, { session: data });
+        pollSession(entryId, data);
+      } catch (err) {
+        console.error("Failed to re-analyze recording:", err);
+        updateEntry(entryId, {
+          status: "error",
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [recordings, reader, updateEntry, pollSession]
   );
 
   const deleteEntry = useCallback(
@@ -604,7 +638,12 @@ export default function Home() {
               </div>
             )}
 
-            {selected?.session?.report && <ReportView report={selected.session.report} />}
+            {selected?.session?.report && selected.status !== "processing" && (
+              <ReportView
+                report={selected.session.report}
+                onReanalyze={selected.session.hasTranscript ? () => reanalyze(selected.id) : undefined}
+              />
+            )}
           </div>
         </div>
 

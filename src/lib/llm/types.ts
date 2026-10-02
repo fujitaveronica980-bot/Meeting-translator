@@ -37,8 +37,10 @@ export interface AnalysisResult {
   culturalNotes: CulturalNote[];
   /** Casual mode only — providers should return [] for meeting/seminar. */
   suggestedReplies?: SuggestedReplyGroup[];
-  /** Absent when not produced (casual clips, or the insights call failed). */
+  /** Absent when not produced (casual clips, or the insights calls failed). */
   insights?: MeetingInsights;
+  /** One line per optional part of the report that could not be generated, and why. */
+  issues?: string[];
   /** Real-usage-based estimate; mock provider omits it (no real cost). */
   estimatedCostUsd?: number;
 }

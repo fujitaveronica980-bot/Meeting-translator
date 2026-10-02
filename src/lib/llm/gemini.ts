@@ -26,12 +26,13 @@ import type {
  * recommended model, and flash-lite is the cheapest tier that's still solid
  * for translation/extraction work. Override with GEMINI_MODEL if needed.
  *
- * The report comes from two calls that never echo the transcript back — the
- * meeting analysis and, in parallel, the insights layer (what the reader
- * should do about it; see analyzeInsights) — so the output stays small and
- * the request count stays at two no matter how long the recording is: an
- * hour-plus meeting costs the same requests as a short one, just with more
- * input tokens. (There
+ * The report comes from four calls that never echo the transcript back —
+ * the meeting analysis, two for the insights layer (what the reader should
+ * do about it), and one for the summary's overview and key points — so the
+ * output stays small and the request count stays the same no matter how
+ * long the recording is: an hour-plus meeting costs the same requests as a
+ * short one, just with more input tokens. Only the meeting analysis is
+ * essential; the others can fail individually (see analyze()). (There
  * used to be a line-by-line English translation of the transcript as well;
  * it took dozens of extra calls on a long recording, any of which could
  * sink the whole report, and the transcript is no longer shown.)
@@ -73,29 +74,9 @@ const suggestedRepliesSchema = {
   },
 };
 
-/**
- * `extended` adds the fields the PDF summary uses (overview, key points,
- * bilingual deadlines, term meanings). The schema without them is the one
- * that has been running in production; analyzeMeeting() falls back to it
- * if the extended one is rejected, so a schema problem can never cost a
- * report that used to work.
- */
-function buildAnalysisSchema(mode: SessionMode, extended: boolean) {
+function buildAnalysisSchema(mode: SessionMode) {
   const properties: Record<string, unknown> = {
     title: bilingualSchema,
-    ...(extended
-      ? {
-          overview: bilingualSchema,
-          keyPoints: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: { headline: bilingualSchema, detail: bilingualSchema },
-              required: ["headline", "detail"],
-            },
-          },
-        }
-      : {}),
     executiveSummary: {
       type: Type.OBJECT,
       properties: {
@@ -126,7 +107,6 @@ function buildAnalysisSchema(mode: SessionMode, extended: boolean) {
           description: bilingualSchema,
           owner: { type: Type.STRING },
           dueHint: { type: Type.STRING },
-          ...(extended ? { due: bilingualSchema } : {}),
         },
         required: ["description"],
       },
@@ -141,9 +121,8 @@ function buildAnalysisSchema(mode: SessionMode, extended: boolean) {
           reading: { type: Type.STRING },
           translation: { type: Type.STRING },
           note: { type: Type.STRING },
-          ...(extended ? { meaning: bilingualSchema } : {}),
         },
-        required: ["term", "reading", "translation", ...(extended ? ["meaning"] : [])],
+        required: ["term", "reading", "translation"],
       },
     },
     culturalNotes: {
@@ -158,7 +137,6 @@ function buildAnalysisSchema(mode: SessionMode, extended: boolean) {
 
   const required = [
     "title",
-    ...(extended ? ["overview", "keyPoints"] : []),
     "executiveSummary",
     "keyTopics",
     "actionItems",
@@ -188,19 +166,12 @@ You will receive a diarized transcript of ${context} as a JSON array of {speaker
 where startMs is when the line begins, in milliseconds from the start of the recording.
 Do not reproduce the transcript in your response. Instead, analyze it and produce:
 - a short bilingual title
-- a bilingual overview: one or two plain sentences saying what the recording was about and its main
-  outcome, written for someone who was not there
-- 3-6 bilingual key points, the things a reader most needs to take away: each a short headline that
-  states the point as a complete sentence, plus one or two sentences of detail
 - a bilingual executive summary (3-5 bullet points each language)
 - key topics covering the whole recording from start to finish, each with start/end times in
   milliseconds taken from the startMs of the lines it spans
-- action items with an owner when identifiable from context (leave empty if this doesn't apply, e.g. casual chat);
-  when a deadline was mentioned give it in "due" in both languages (e.g. ja "来週火曜まで", en "By next Tuesday"),
-  and leave "due" out when none was
+- action items with an owner when identifiable from context (leave empty if this doesn't apply, e.g. casual chat)
 - concrete recommendations (or conversational suggestions, if casual)
-- a glossary of notable terms worth flagging for a non-native speaker, with furigana-style reading and
-  translation, and a "meaning": a one-sentence plain-language definition of the term in each language
+- a glossary of notable terms worth flagging for a non-native speaker, with furigana-style reading and translation
 - cultural notes: places where the phrasing carries implicit meaning (softened refusals, indirectness,
   honorifics, etc.) that a non-Japanese reader could easily miss, with a short quote and explanation`;
 
@@ -290,50 +261,116 @@ function estimateCostUsd(response: GenerateContentResponse): number {
   return (inputTokens / 1_000_000) * pricing.input + (outputTokens / 1_000_000) * pricing.output;
 }
 
-type MeetingAnalysis = Omit<AnalysisResult, "estimatedCostUsd" | "insights">;
+type MeetingAnalysis = Omit<
+  AnalysisResult,
+  "estimatedCostUsd" | "insights" | "overview" | "keyPoints" | "issues"
+>;
 
-async function analyzeMeetingWith(
+/**
+ * One structured-output call. Every part of the report goes through this,
+ * each with its own small schema: a single schema covering everything was
+ * too much for the API to serve, and separate calls also mean one part
+ * failing costs only that part.
+ */
+async function generateJson<T>(
   ai: GoogleGenAI,
   model: string,
-  lines: AnalysisInputLine[],
-  mode: SessionMode,
-  extended: boolean
-): Promise<{ analysis: MeetingAnalysis; costUsd: number }> {
+  what: string,
+  systemInstruction: string,
+  responseSchema: unknown,
+  input: string
+): Promise<{ value: T; costUsd: number }> {
   const response = await generateWithRetry(ai, {
     model,
-    contents: [{ role: "user", parts: [{ text: JSON.stringify(lines) }] }],
+    contents: [{ role: "user", parts: [{ text: input }] }],
     config: {
-      systemInstruction: buildAnalysisPrompt(mode),
+      systemInstruction,
       responseMimeType: "application/json",
-      responseSchema: buildAnalysisSchema(mode, extended),
+      responseSchema: responseSchema as Record<string, unknown>,
     },
   });
-  const analysis = parseJson<MeetingAnalysis>(
-    response.text,
-    "the meeting analysis",
-    response.candidates?.[0]?.finishReason
-  );
-  return { analysis, costUsd: estimateCostUsd(response) };
-}
-
-async function analyzeMeeting(
-  ai: GoogleGenAI,
-  model: string,
-  lines: AnalysisInputLine[],
-  mode: SessionMode
-): Promise<{ analysis: MeetingAnalysis; costUsd: number }> {
-  try {
-    return await analyzeMeetingWith(ai, model, lines, mode, true);
-  } catch (err) {
-    console.error("Extended meeting analysis failed; retrying with the basic schema:", err);
-    return analyzeMeetingWith(ai, model, lines, mode, false);
-  }
+  const value = parseJson<T>(response.text, what, response.candidates?.[0]?.finishReason);
+  return { value, costUsd: estimateCostUsd(response) };
 }
 
 const stringList = { type: Type.ARRAY, items: { type: Type.STRING } };
 const bilingualList = { type: Type.ARRAY, items: bilingualSchema };
 
-const insightsSchema = {
+// --- Summary extras: what the PDF summary adds on top of the meeting analysis.
+
+interface SummaryExtras {
+  overview: { ja: string; en: string };
+  keyPoints: NonNullable<AnalysisResult["keyPoints"]>;
+  termMeanings: { term: string; meaning: { ja: string; en: string } }[];
+  deadlines: { index: number; due: { ja: string; en: string } }[];
+}
+
+const extrasSchema = {
+  type: Type.OBJECT,
+  properties: {
+    overview: bilingualSchema,
+    keyPoints: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: { headline: bilingualSchema, detail: bilingualSchema },
+        required: ["headline", "detail"],
+      },
+    },
+    termMeanings: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: { term: { type: Type.STRING }, meaning: bilingualSchema },
+        required: ["term", "meaning"],
+      },
+    },
+    deadlines: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: { index: { type: Type.NUMBER }, due: bilingualSchema },
+        required: ["index", "due"],
+      },
+    },
+  },
+  required: ["overview", "keyPoints", "termMeanings", "deadlines"],
+};
+
+function buildExtrasPrompt(mode: SessionMode, meeting: MeetingAnalysis): string {
+  return `You are a professional Japanese conversation analyst writing the front page of a summary for
+someone who was not in the ${mode === "seminar" ? "seminar" : "meeting"}.
+You will receive the diarized transcript as a JSON array of {speaker, startMs, japanese} lines.
+Everything bilingual is written in natural Japanese (ja) and plain English (en). Use only what the
+transcript supports.
+
+Produce:
+- overview: one or two plain sentences saying what the recording was about and its main outcome.
+- keyPoints: 3-6 things a reader most needs to take away — each a short headline that states the
+  point as a complete sentence, plus one or two sentences of detail.
+- termMeanings: for each of these terms, a one-sentence plain-language definition in each language,
+  as the term was used here. Return the term exactly as given.
+  Terms: ${JSON.stringify(meeting.glossary.map((g) => g.term))}
+- deadlines: for each of these action items that had a deadline mentioned, its index and the deadline
+  in each language (e.g. ja "来週火曜まで", en "By next Tuesday"). Leave out items with no deadline.
+  Action items: ${JSON.stringify(meeting.actionItems.map((a, index) => ({ index, action: a.description.ja })))}
+
+Respond only with JSON matching the provided schema.`;
+}
+
+// --- Insights: the layer about what the reader should do (see MeetingInsights),
+// in two calls so neither schema is large.
+
+type InsightsForReader = Pick<
+  MeetingInsights,
+  "forYou" | "decisions" | "openQuestions" | "people" | "carriedOver"
+>;
+type InsightsReference = Pick<
+  MeetingInsights,
+  "details" | "procedures" | "betweenTheLines" | "followUp"
+>;
+
+const insightsForReaderSchema = {
   type: Type.OBJECT,
   properties: {
     forYou: {
@@ -354,12 +391,51 @@ const insightsSchema = {
       },
       required: ["speaker", "basis", "asked", "committed", "questions"],
     },
+    decisions: bilingualList,
+    openQuestions: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: { question: bilingualSchema, owner: { type: Type.STRING } },
+        required: ["question", "owner"],
+      },
+    },
+    people: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          speaker: { type: Type.STRING },
+          name: { type: Type.STRING },
+          role: bilingualSchema,
+          caresAbout: bilingualSchema,
+        },
+        required: ["speaker", "name", "role", "caresAbout"],
+      },
+    },
+    carriedOver: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: { item: bilingualSchema, status: bilingualSchema },
+        required: ["item", "status"],
+      },
+    },
+  },
+  required: ["forYou", "decisions", "openQuestions", "people", "carriedOver"],
+};
+
+const insightsReferenceSchema = {
+  type: Type.OBJECT,
+  properties: {
     details: {
       type: Type.ARRAY,
       items: {
         type: Type.OBJECT,
         properties: {
-          category: { type: Type.STRING, enum: ["number", "date", "person", "tool", "rule"] },
+          // One of: number, date, person, tool, rule (asked for in the prompt
+          // rather than as an enum, to keep the schema simple to serve).
+          category: { type: Type.STRING },
           detail: bilingualSchema,
         },
         required: ["category", "detail"],
@@ -378,15 +454,6 @@ const insightsSchema = {
           },
         },
         required: ["title", "steps"],
-      },
-    },
-    decisions: bilingualList,
-    openQuestions: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: { question: bilingualSchema, owner: { type: Type.STRING } },
-        required: ["question", "owner"],
       },
     },
     betweenTheLines: {
@@ -420,52 +487,17 @@ const insightsSchema = {
       },
       required: ["message", "questions"],
     },
-    people: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          speaker: { type: Type.STRING },
-          name: { type: Type.STRING },
-          role: bilingualSchema,
-          caresAbout: bilingualSchema,
-        },
-        required: ["speaker", "name", "role", "caresAbout"],
-      },
-    },
-    carriedOver: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: { item: bilingualSchema, status: bilingualSchema },
-        required: ["item", "status"],
-      },
-    },
   },
-  required: [
-    "forYou",
-    "details",
-    "procedures",
-    "decisions",
-    "openQuestions",
-    "betweenTheLines",
-    "followUp",
-    "people",
-    "carriedOver",
-  ],
+  required: ["details", "procedures", "betweenTheLines", "followUp"],
 };
 
-function buildInsightsPrompt(mode: SessionMode, context: AnalysisContext): string {
+function insightsPreamble(mode: SessionMode, context: AnalysisContext): string {
   const reader = context.reader.trim();
-  const { openActions, people, terms } = context.memory;
-  const hasMemory = openActions.length > 0 || people.length > 0 || terms.length > 0;
-
   return `You are a sharp chief of staff preparing one person to act on a Japanese ${
     mode === "seminar" ? "seminar" : "business meeting"
   } they attended.
 You will receive the diarized transcript as a JSON array of {speaker, startMs, japanese} lines.
-A separate summary already covers what was discussed. Your job is the layer a summary loses: what
-the reader must do, the exact specifics, what was really meant, and how to follow up.
+A separate summary already covers what was discussed. Your job is the layer a summary loses.
 Everything bilingual is written in natural Japanese (ja) and plain English (en).
 Use only what the transcript supports. Never invent a number, date, name or commitment; when
 something isn't there, return an empty list or an empty string for it.
@@ -473,16 +505,24 @@ something isn't there, return an empty list or an empty string for it.
 THE READER
 ${
   reader
-    ? `The person reading this describes themselves as: "${reader}".
-Work out which speaker label is the reader — from being addressed by name, introducing themselves,
-or their role in the conversation.`
+    ? `The person reading this describes themselves as: "${reader}".`
     : "The reader has not said who they are."
+}`;
 }
+
+function buildInsightsForReaderPrompt(mode: SessionMode, context: AnalysisContext): string {
+  const reader = context.reader.trim();
+  const { openActions, people, terms } = context.memory;
+  const hasMemory = openActions.length > 0 || people.length > 0 || terms.length > 0;
+
+  return `${insightsPreamble(mode, context)}
 
 Produce:
 - forYou:${
     reader
       ? `
+  Work out which speaker label is the reader — from being addressed by name, introducing
+  themselves, or their role in the conversation.
   - speaker: the reader's speaker label (e.g. "S2"), or "" if they cannot be identified with
     reasonable confidence or do not speak
   - basis: one sentence on how you identified them (or why you could not)
@@ -494,25 +534,9 @@ Produce:
       : `
   speaker "", basis saying the reader did not say who they are, and asked, committed and questions empty.`
   }
-- details: every specific that someone would otherwise have to re-listen for — figures, amounts,
-  thresholds, dates, times, named people, companies, tools and systems, and stated rules or criteria.
-  One self-contained statement each (e.g. "Target companies: annual sales of 10 billion yen or more"),
-  with its category. Be exhaustive here; this is a reference sheet, not a summary.
-- procedures: any process, format or set of rules that was explained step by step — give the steps
-  in order, as precisely as they were explained. Empty if nothing was explained that way.
 - decisions: what was actually decided or agreed.
 - openQuestions: what was left unresolved or deferred, with the speaker label or name of whoever
   owes the answer ("" if nobody was named).
-- betweenTheLines: what was meant beyond the literal words — a soft phrase that was really a request
-  or a refusal, what a speaker kept returning to or spent the most time on, an unstated expectation
-  or concern. Each is your interpretation: say what you infer and why, and give the Japanese phrase
-  it rests on in "quote" when there is one. Leave out anything you are not reasonably confident of.
-- followUp:
-  - message: a short recap message the reader could send to the other participants afterwards, in
-    polite business Japanese — thanks, their understanding of the main points, and the actions they
-    will take — plus an accurate English version of it. Written in the reader's voice.
-  - questions: 2-4 good questions the reader could ask next time that show they understood and
-    thought ahead, each in Japanese, romaji (the reader may not read Japanese fluently) and English.
 - people: one entry per speaker — their label, their name if the recording gives it ("" otherwise;
   never guess), their role, and what they appear to care about most in this conversation.
 - carriedOver: see below.
@@ -531,33 +555,38 @@ were not discussed. Use the known people and terms to recognise names and vocabu
 Respond only with JSON matching the provided schema.`;
 }
 
-/**
- * The second layer of the report (see MeetingInsights). A separate call from
- * the meeting analysis so that it can fail on its own: the summary is what
- * the STT money was spent to get, and a problem here must never take it down.
- */
-async function analyzeInsights(
-  ai: GoogleGenAI,
-  model: string,
-  lines: AnalysisInputLine[],
-  mode: SessionMode,
-  context: AnalysisContext
-): Promise<{ insights: MeetingInsights; costUsd: number }> {
-  const response = await generateWithRetry(ai, {
-    model,
-    contents: [{ role: "user", parts: [{ text: JSON.stringify(lines) }] }],
-    config: {
-      systemInstruction: buildInsightsPrompt(mode, context),
-      responseMimeType: "application/json",
-      responseSchema: insightsSchema,
-    },
-  });
-  const insights = parseJson<MeetingInsights>(
-    response.text,
-    "the meeting insights",
-    response.candidates?.[0]?.finishReason
-  );
-  return { insights, costUsd: estimateCostUsd(response) };
+function buildInsightsReferencePrompt(mode: SessionMode, context: AnalysisContext): string {
+  return `${insightsPreamble(mode, context)}
+
+Produce:
+- details: every specific that someone would otherwise have to re-listen for — figures, amounts,
+  thresholds, dates, times, named people, companies, tools and systems, and stated rules or criteria.
+  One self-contained statement each (e.g. "Target companies: annual sales of 10 billion yen or more"),
+  with its category: exactly one of "number", "date", "person", "tool", "rule".
+  Be thorough: this is a reference sheet, not a summary — but at most 40 entries, the most useful first.
+- procedures: any process, format or set of rules that was explained step by step — give the steps
+  in order, as precisely as they were explained. Empty if nothing was explained that way.
+- betweenTheLines: what was meant beyond the literal words — a soft phrase that was really a request
+  or a refusal, what a speaker kept returning to or spent the most time on, an unstated expectation
+  or concern. Each is your interpretation: say what you infer and why, and give the Japanese phrase
+  it rests on in "quote" when there is one. Leave out anything you are not reasonably confident of.
+- followUp:
+  - message: a short recap message the reader could send to the other participants afterwards, in
+    polite business Japanese — thanks, their understanding of the main points, and the actions they
+    will take — plus an accurate English version of it. Written in the reader's voice.
+  - questions: 2-4 good questions the reader could ask next time that show they understood and
+    thought ahead, each in Japanese, romaji (the reader may not read Japanese fluently) and English.
+
+Respond only with JSON matching the provided schema.`;
+}
+
+const EMPTY_BILINGUAL = { ja: "", en: "" };
+const DETAIL_CATEGORIES = new Set(["number", "date", "person", "tool", "rule"]);
+
+/** A failed part of the report, in words the user can act on or pass along. */
+function issue(part: string, err: unknown): string {
+  const reason = err instanceof Error ? err.message : String(err);
+  return `${part} could not be generated: ${reason.replace(/\s+/g, " ").slice(0, 300)}`;
 }
 
 export const geminiAnalysisProvider: AnalysisProvider = {
@@ -575,23 +604,121 @@ export const geminiAnalysisProvider: AnalysisProvider = {
 
     const ai = new GoogleGenAI({ apiKey });
     const model = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+    const input = JSON.stringify(lines);
+    const issues: string[] = [];
+    let costUsd = 0;
+
+    // The meeting analysis is the report; if it fails, the analysis fails.
+    // Everything after it is an addition that can go missing on its own —
+    // recorded in `issues` so the page can say what's absent and why,
+    // instead of the section silently not being there.
+    const optional = async <T>(part: string, run: () => Promise<{ value: T; costUsd: number }>) => {
+      try {
+        const result = await run();
+        costUsd += result.costUsd;
+        return result.value;
+      } catch (err) {
+        console.error(`${part} failed:`, err);
+        issues.push(issue(part, err));
+        return null;
+      }
+    };
 
     // Casual clips are short bursts where speed matters and the reader isn't
-    // even in the recording, so they skip the insights layer.
-    const [meeting, extra] = await Promise.all([
-      analyzeMeeting(ai, model, lines, mode),
-      mode === "casual"
-        ? null
-        : analyzeInsights(ai, model, lines, mode, context).catch((err) => {
-            console.error("Meeting insights failed; the report goes out without them:", err);
-            return null;
-          }),
+    // even in the recording, so they get the meeting analysis alone.
+    const full = mode !== "casual";
+
+    const [meeting, forReader, reference] = await Promise.all([
+      generateJson<MeetingAnalysis>(
+        ai,
+        model,
+        "the meeting analysis",
+        buildAnalysisPrompt(mode),
+        buildAnalysisSchema(mode),
+        input
+      ),
+      full
+        ? optional("The “For you”, decisions and people sections", () =>
+            generateJson<InsightsForReader>(
+              ai,
+              model,
+              "the reader insights",
+              buildInsightsForReaderPrompt(mode, context),
+              insightsForReaderSchema,
+              input
+            )
+          )
+        : null,
+      full
+        ? optional("The details sheet, between-the-lines and follow-up sections", () =>
+            generateJson<InsightsReference>(
+              ai,
+              model,
+              "the reference insights",
+              buildInsightsReferencePrompt(mode, context),
+              insightsReferenceSchema,
+              input
+            )
+          )
+        : null,
     ]);
+    costUsd += meeting.costUsd;
+    const analysis = meeting.value;
+
+    // Needs the meeting analysis first: it defines the terms and action
+    // items whose meanings and deadlines this fills in.
+    const extras = full
+      ? await optional("The overview and key points", () =>
+          generateJson<SummaryExtras>(
+            ai,
+            model,
+            "the summary extras",
+            buildExtrasPrompt(mode, analysis),
+            extrasSchema,
+            input
+          )
+        )
+      : null;
+
+    if (extras) {
+      const meanings = new Map(extras.termMeanings.map((t) => [t.term, t.meaning]));
+      analysis.glossary = analysis.glossary.map((g) =>
+        meanings.has(g.term) ? { ...g, meaning: meanings.get(g.term) } : g
+      );
+      for (const { index, due } of extras.deadlines) {
+        if (analysis.actionItems[index]) analysis.actionItems[index].due = due;
+      }
+    }
+
+    // Whichever half of the insights arrived is kept; the other half is
+    // left empty (and explained in `issues`) rather than dropping both.
+    const insights: MeetingInsights | undefined =
+      forReader || reference
+        ? {
+            forYou: forReader?.forYou ?? {
+              speaker: "",
+              basis: EMPTY_BILINGUAL,
+              asked: [],
+              committed: [],
+              questions: [],
+            },
+            decisions: forReader?.decisions ?? [],
+            openQuestions: forReader?.openQuestions ?? [],
+            people: forReader?.people ?? [],
+            carriedOver: forReader?.carriedOver ?? [],
+            details: (reference?.details ?? []).filter((d) => DETAIL_CATEGORIES.has(d.category)),
+            procedures: reference?.procedures ?? [],
+            betweenTheLines: reference?.betweenTheLines ?? [],
+            followUp: reference?.followUp ?? { message: { japanese: "", english: "" }, questions: [] },
+          }
+        : undefined;
 
     return {
-      ...meeting.analysis,
-      ...(extra ? { insights: extra.insights } : {}),
-      estimatedCostUsd: meeting.costUsd + (extra?.costUsd ?? 0),
+      ...analysis,
+      ...(extras ? { overview: extras.overview, keyPoints: extras.keyPoints } : {}),
+      ...(insights ? { insights } : {}),
+      ...(issues.length > 0 ? { issues } : {}),
+      estimatedCostUsd: costUsd,
     };
   },
 };

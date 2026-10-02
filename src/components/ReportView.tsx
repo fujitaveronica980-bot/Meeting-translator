@@ -223,7 +223,14 @@ function SubHeading({ children }: { children: React.ReactNode }) {
   return <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{children}</h3>;
 }
 
-export function ReportView({ report }: { report: MeetingReport }) {
+export function ReportView({
+  report,
+  onReanalyze,
+}: {
+  report: MeetingReport;
+  /** Present when the server kept this recording's transcript and can rebuild the report from it. */
+  onReanalyze?: () => void;
+}) {
   // Absent on older reports, casual clips, and when that analysis call failed.
   const insights = report.insights;
   const forYou = insights?.forYou;
@@ -238,7 +245,19 @@ export function ReportView({ report }: { report: MeetingReport }) {
             <h1 className="text-2xl font-semibold text-foreground">{report.title.ja}</h1>
             <p className="text-lg text-muted">{report.title.en}</p>
           </div>
-          <DownloadButton report={report} />
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <DownloadButton report={report} />
+            {onReanalyze && (
+              <button
+                type="button"
+                onClick={onReanalyze}
+                title="Rebuild this report from the saved transcript — no upload or transcription needed"
+                className="min-h-9 rounded-full border border-border px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-subtle"
+              >
+                Re-analyze
+              </button>
+            )}
+          </div>
         </div>
         <p className="mt-2 text-sm text-muted">
           {report.mode} · {ms(report.durationMs)} · {report.participants.join(", ")}
@@ -291,6 +310,18 @@ export function ReportView({ report }: { report: MeetingReport }) {
         </Section>
       )}
 
+      {report.analysisIssues && report.analysisIssues.length > 0 && (
+        <div className="flex flex-col gap-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          <p className="font-medium">Some sections are missing from this report:</p>
+          <ul className="list-disc pl-4">
+            {report.analysisIssues.map((issue, i) => (
+              <li key={i}>{issue}</li>
+            ))}
+          </ul>
+          {onReanalyze && <p>Use “Re-analyze” to try again — it doesn&apos;t transcribe the audio again.</p>}
+        </div>
+      )}
+
       {forYou && hasForYou && (
         <Section title="For You / あなた向け" section="forYou">
           <p className="text-xs text-muted">
@@ -331,11 +362,13 @@ export function ReportView({ report }: { report: MeetingReport }) {
         </Section>
       )}
 
-      {insights && forYou && !hasForYou && (
+      {insights && forYou && !hasForYou && forYou.basis.en !== "" && (
         <p className="rounded-lg border border-border bg-surface p-3 text-xs text-muted">
           {forYou.speaker
             ? "Nothing in this recording was asked of you or promised by you."
-            : "No “For you” section: fill in “Who are you in this meeting?” before uploading and the report will pick out what was asked of you."}
+            : onReanalyze
+              ? "No “For you” section: fill in “Who are you in this meeting?” above, then press “Re-analyze”, and the report will pick out what was asked of you."
+              : "No “For you” section: fill in “Who are you in this meeting?” before uploading and the report will pick out what was asked of you."}
         </p>
       )}
 

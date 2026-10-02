@@ -155,6 +155,11 @@ export interface MeetingReport {
    */
   rawTranscript?: TranscriptLine[];
   insights?: MeetingInsights;
+  /**
+   * Optional parts of the report that could not be generated, and why —
+   * shown on the page so a missing section is explained rather than silent.
+   */
+  analysisIssues?: string[];
   /** Casual mode only: example replies you could give back, in the moment. */
   suggestedReplies?: SuggestedReplyGroup[];
 }
@@ -175,6 +180,11 @@ export interface Session {
    * crash) and will never finish; see api/sessions/[id]/route.ts.
    */
   heartbeatAt?: string;
+  /**
+   * The transcript is kept server-side (see session-store), so the report
+   * can be re-analyzed without paying to transcribe the audio again.
+   */
+  hasTranscript?: boolean;
   /** Indexes into report.actionItems the reader has ticked off as done. */
   doneActions?: number[];
   report?: MeetingReport;
