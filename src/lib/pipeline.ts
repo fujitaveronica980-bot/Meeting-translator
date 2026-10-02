@@ -8,26 +8,12 @@ import type { MeetingReport, Session, SessionMode, TranscriptLine } from "@/lib/
 import { saveSession } from "@/lib/session-store";
 
 /**
- * Runs a session end to end: STT -> translate/analyze -> assemble report.
- * Synchronous within the request for simplicity; the mock provider is
- * instant, and real STT providers already poll internally. A queue/webhook
- * based flow would be the natural upgrade if this ever needs to survive
- * request timeouts on a given host.
+ * Registers a new session and saves it in its initial "transcribing" state,
+ * so the client has an id to poll before any slow work has started.
  */
-export async function runSession(params: {
-  audio: Buffer;
+export async function createSession(params: {
   mode: SessionMode;
   filename?: string;
-  mimeType?: string;
-  /**
-   * The "Try sample recording" button: always forces the mock STT + mock
-   * analysis providers, regardless of which real providers are configured.
-   * There's no real audio behind the canned demo dialogue, so a real STT
-   * provider has nothing valid to transcribe — and even if there were,
-   * routing the fixed demo text through a real (paid) provider on every
-   * click would defeat the point of a free, zero-signup sample.
-   */
-  useSample?: boolean;
 }): Promise<Session> {
   const session: Session = {
     id: uuidv4(),
@@ -36,10 +22,36 @@ export async function runSession(params: {
     status: "transcribing",
     audioFile: params.filename,
   };
+  await saveSession(session);
+  return session;
+}
 
+/**
+ * Runs a created session end to end: STT -> translate/analyze -> assemble
+ * report, saving progress to the session store as it goes. Deliberately not
+ * tied to the request that uploaded the audio — a real recording takes many
+ * minutes (STT polls for up to 20), far longer than a host will hold one
+ * HTTP request open, so api/sessions/route.ts runs this after responding
+ * and the client polls the session until it's ready.
+ */
+export async function processSession(
+  session: Session,
+  params: {
+    audio: Buffer;
+    filename?: string;
+    mimeType?: string;
+    /**
+     * The "Try sample recording" button: always forces the mock STT + mock
+     * analysis providers, regardless of which real providers are configured.
+     * There's no real audio behind the canned demo dialogue, so a real STT
+     * provider has nothing valid to transcribe — and even if there were,
+     * routing the fixed demo text through a real (paid) provider on every
+     * click would defeat the point of a free, zero-signup sample.
+     */
+    useSample?: boolean;
+  }
+): Promise<Session> {
   try {
-    await saveSession(session);
-
     const stt = params.useSample ? mockProvider : getSttProvider();
     const transcription = await stt.transcribe(params.audio, {
       language: "ja",
@@ -70,7 +82,7 @@ export async function runSession(params: {
     // containing the raw transcript, just untranslated, instead of nothing.
     try {
       const llm = params.useSample ? mockAnalysisProvider : getAnalysisProvider();
-      const analysis = await llm.analyze(analysisInput, params.mode);
+      const analysis = await llm.analyze(analysisInput, session.mode);
 
       const englishById = new Map(analysis.transcriptEnglish.map((t) => [t.id, t.english]));
       const transcript: TranscriptLine[] = linesWithIds.map((l) => ({
@@ -84,7 +96,7 @@ export async function runSession(params: {
 
       const report: MeetingReport = {
         title: analysis.title,
-        mode: params.mode,
+        mode: session.mode,
         durationMs: transcription.durationMs,
         recordedAt: session.createdAt,
         participants,
@@ -111,7 +123,7 @@ export async function runSession(params: {
           ja: "文字起こしのみ（分析エラー）",
           en: "Transcript only (translation/analysis failed)",
         },
-        mode: params.mode,
+        mode: session.mode,
         durationMs: transcription.durationMs,
         recordedAt: session.createdAt,
         participants,
@@ -139,7 +151,11 @@ export async function runSession(params: {
   } catch (err) {
     session.status = "error";
     session.errorMessage = err instanceof Error ? err.message : String(err);
-    await saveSession(session);
+    // Nothing is awaiting this any more (it runs after the response), so a
+    // failed save here must not escape as an unhandled rejection.
+    await saveSession(session).catch((saveErr) =>
+      console.error(`Failed to save error state for session ${session.id}:`, saveErr)
+    );
   }
 
   return session;

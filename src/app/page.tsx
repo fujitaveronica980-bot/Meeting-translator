@@ -37,6 +37,32 @@ interface RecordingEntry {
   errorMessage: string | null;
 }
 
+// How often to ask the server whether a recording has finished processing.
+const POLL_INTERVAL_MS = 3000;
+// Give up on a recording still "processing" this long after it was created:
+// STT alone is capped at 20 minutes server-side, so past this the server
+// almost certainly restarted mid-run and will never finish it.
+const STALE_AFTER_MS = 60 * 60 * 1000;
+// Consecutive failed status checks tolerated before giving up — covers a
+// dropped connection or the server briefly restarting.
+const MAX_POLL_FAILURES = 10;
+
+/**
+ * res.json() on an empty or non-JSON body (a gateway timeout, a host error
+ * page) throws a bare parser error that says nothing useful — surface the
+ * HTTP status instead.
+ */
+async function readJson<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(
+      `The server returned ${text ? "an unexpected" : "an empty"} response (HTTP ${res.status}). Please try again.`
+    );
+  }
+}
+
 function newId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -49,15 +75,80 @@ export default function Home() {
   const [recordings, setRecordings] = useState<RecordingEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const resultRef = useRef<HTMLDivElement | null>(null);
+  // Entry id -> the server session currently being polled for it. A poll
+  // loop stops as soon as its entry is retried, deleted, or the page unmounts.
+  const activePolls = useRef(new Map<string, string>());
 
   // Object URLs are only released when the tab closes/unmounts, so a
   // recording stays replayable for as long as the page is open.
   useEffect(() => {
+    const polls = activePolls.current;
     return () => {
       recordings.forEach((r) => r.audioUrl && URL.revokeObjectURL(r.audioUrl));
+      polls.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const updateEntry = useCallback((id: string, patch: Partial<RecordingEntry>) => {
+    setRecordings((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }, []);
+
+  // Processing happens server-side after the upload request has already
+  // returned, so the outcome is fetched by polling the session.
+  const pollSession = useCallback(
+    async (entryId: string, session: Session) => {
+      if (activePolls.current.get(entryId) === session.id) return; // already polling
+      activePolls.current.set(entryId, session.id);
+      const startedAt = new Date(session.createdAt).getTime();
+      let failures = 0;
+
+      while (activePolls.current.get(entryId) === session.id) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        if (activePolls.current.get(entryId) !== session.id) return;
+
+        let latest: Session | null = null;
+        let fatal: string | null = null;
+        try {
+          const res = await fetch(`/api/sessions/${session.id}`);
+          if (res.status === 404) {
+            fatal = "The server no longer has this recording — it may have restarted. Please try again.";
+          } else if (res.ok) {
+            latest = await readJson<Session>(res);
+          }
+        } catch (err) {
+          console.error("Failed to check recording status:", err);
+        }
+        if (activePolls.current.get(entryId) !== session.id) return;
+
+        if (latest?.status === "ready") {
+          updateEntry(entryId, { status: "ready", session: latest, errorMessage: null });
+        } else if (latest?.status === "error") {
+          updateEntry(entryId, {
+            status: "error",
+            errorMessage: latest.errorMessage || "Something went wrong.",
+            session: latest,
+          });
+        } else {
+          failures = latest ? 0 : failures + 1;
+          if (!fatal && failures >= MAX_POLL_FAILURES) {
+            fatal = "Lost contact with the server while processing. Reload the page to check on this recording.";
+          }
+          if (!fatal && Date.now() - startedAt > STALE_AFTER_MS) {
+            fatal = "Processing was interrupted before it finished. Please try again.";
+          }
+          if (!fatal) {
+            if (latest) updateEntry(entryId, { session: latest });
+            continue;
+          }
+          updateEntry(entryId, { status: "error", errorMessage: fatal });
+        }
+        activePolls.current.delete(entryId);
+        return;
+      }
+    },
+    [updateEntry]
+  );
 
   // Restore past sessions on load, when persistence is configured server-
   // side — otherwise this just returns an empty list and the sidebar starts
@@ -65,11 +156,15 @@ export default function Home() {
   // player/retry (no file to retry with) — just the report itself.
   useEffect(() => {
     fetch("/api/sessions")
-      .then((res) => res.json())
-      .then((data: { sessions: Session[] }) => {
+      .then((res) => readJson<{ sessions: Session[] }>(res))
+      .then((data) => {
         setRecordings((prev) => [
           ...prev,
-          ...data.sessions.map(
+          // Skip anything already listed — dev-mode React runs this effect
+          // twice, which otherwise lists every restored session twice.
+          ...data.sessions
+            .filter((s) => !prev.some((r) => r.id === s.id || r.session?.id === s.id))
+            .map(
             (s): RecordingEntry => ({
               id: s.id,
               createdAt: new Date(s.createdAt).getTime(),
@@ -84,17 +179,20 @@ export default function Home() {
             })
           ),
         ]);
+        // Still being processed server-side (e.g. the page was reloaded
+        // mid-run) — pick the polling back up rather than showing
+        // "Processing…" forever.
+        data.sessions
+          .filter((s) => s.status !== "ready" && s.status !== "error")
+          .forEach((s) => pollSession(s.id, s));
       })
       .catch((err) => console.error("Failed to load session history:", err));
-  }, []);
-
-  const updateEntry = useCallback((id: string, patch: Partial<RecordingEntry>) => {
-    setRecordings((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-  }, []);
+  }, [pollSession]);
 
   const submit = useCallback(
     async (entryId: string, entryMode: SessionMode, entryFile: File | null, useSample: boolean) => {
-      updateEntry(entryId, { status: "processing", errorMessage: null });
+      activePolls.current.delete(entryId);
+      updateEntry(entryId, { status: "processing", errorMessage: null, session: null });
       try {
         const form = new FormData();
         form.append("mode", entryMode);
@@ -105,16 +203,18 @@ export default function Home() {
         }
 
         const res = await fetch("/api/sessions", { method: "POST", body: form });
-        const data: Session = await res.json();
+        const data = await readJson<Session>(res);
 
         if (!res.ok || data.status === "error") {
           updateEntry(entryId, {
             status: "error",
             errorMessage: data.errorMessage || "Something went wrong.",
-            session: data,
           });
         } else {
-          updateEntry(entryId, { status: "ready", session: data, errorMessage: null });
+          // Upload accepted — the server carries on processing in the
+          // background, so wait for the result by polling.
+          updateEntry(entryId, { session: data });
+          pollSession(entryId, data);
         }
       } catch (err) {
         console.error("Failed to process recording:", err);
@@ -124,7 +224,7 @@ export default function Home() {
         });
       }
     },
-    [updateEntry]
+    [updateEntry, pollSession]
   );
 
   const startEntry = useCallback(
@@ -159,19 +259,22 @@ export default function Home() {
     [recordings, submit]
   );
 
-  const deleteEntry = useCallback((entryId: string) => {
-    setRecordings((prev) => {
-      const entry = prev.find((r) => r.id === entryId);
+  const deleteEntry = useCallback(
+    (entryId: string) => {
+      const entry = recordings.find((r) => r.id === entryId);
+      activePolls.current.delete(entryId);
       if (entry?.audioUrl) URL.revokeObjectURL(entry.audioUrl);
-      return prev.filter((r) => r.id !== entryId);
-    });
-    setSelectedId((prev) => (prev === entryId ? null : prev));
-    // Sessions persist server-side now (when configured) — delete there too,
-    // or it'd just reappear next time history is loaded.
-    fetch(`/api/sessions/${entryId}`, { method: "DELETE" }).catch((err) =>
-      console.error("Failed to delete session:", err)
-    );
-  }, []);
+      setRecordings((prev) => prev.filter((r) => r.id !== entryId));
+      setSelectedId((prev) => (prev === entryId ? null : prev));
+      // Sessions persist server-side now (when configured) — delete there too,
+      // or it'd just reappear next time history is loaded. A fresh entry's id
+      // is client-generated, so go by its server session's id when it has one.
+      fetch(`/api/sessions/${entry?.session?.id ?? entryId}`, { method: "DELETE" }).catch((err) =>
+        console.error("Failed to delete session:", err)
+      );
+    },
+    [recordings]
+  );
 
   // Recording auto-submits on stop: turn it on at the start of the seminar,
   // turn it off at the end, and processing kicks off immediately — no
@@ -353,7 +456,9 @@ export default function Home() {
             {selected?.status === "processing" && (
               <div className="flex items-center gap-2 rounded-lg border border-border bg-surface p-3 text-sm text-muted">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-muted" />
-                Transcribing &amp; analyzing — this can take a while for real recordings…
+                {selected.session?.status === "analyzing"
+                  ? "Transcribed — now translating & analyzing…"
+                  : "Transcribing — this can take several minutes for a long recording. You can leave this page open."}
               </div>
             )}
 

@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
-import { runSession } from "@/lib/pipeline";
+import { after, NextRequest, NextResponse } from "next/server";
+import { createSession, processSession } from "@/lib/pipeline";
 import { listSessions } from "@/lib/session-store";
 import type { SessionMode } from "@/lib/types";
 
@@ -41,13 +41,19 @@ export async function POST(req: NextRequest) {
       mimeType = file.type || undefined;
     }
 
-    const session = await runSession({ audio, mode: resolvedMode, filename, mimeType, useSample });
+    const session = await createSession({ mode: resolvedMode, filename });
 
-    return NextResponse.json(session, { status: session.status === "error" ? 502 : 200 });
+    // Respond as soon as the upload is in, and do the slow part afterwards:
+    // holding the request open for the whole transcription made long
+    // recordings fail with an empty response once the host gave up on it.
+    // The client polls GET /api/sessions/[id] for the result.
+    after(() => processSession(session, { audio, filename, mimeType, useSample }));
+
+    return NextResponse.json(session, { status: 202 });
   } catch (err) {
-    // runSession() already catches its own STT/LLM/persistence errors and
-    // returns a normal error-status Session — this is the last-resort net
-    // for anything outside that (e.g. malformed form data), so the client
+    // processSession() catches its own STT/LLM/persistence errors and
+    // records them on the session — this is the last-resort net for
+    // anything before that (e.g. malformed form data), so the client
     // always gets a real JSON body back instead of a broken response it
     // can't even parse.
     console.error("Unhandled error in POST /api/sessions:", err);
