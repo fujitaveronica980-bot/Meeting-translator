@@ -36,21 +36,44 @@ interface RecordingEntry {
   status: "processing" | "ready" | "error";
   session: Session | null;
   errorMessage: string | null;
+  /** Status checks are currently failing — still processing, just out of reach. */
+  unreachable?: boolean;
 }
 
 // How often to ask the server whether a recording has finished processing:
 // quick at first so a short clip comes back promptly, then eased off, since
 // an hour-long recording can take a good while to transcribe.
-const POLL_INTERVAL_MS = 3000;
-const SLOW_POLL_INTERVAL_MS = 10000;
+const POLL_INTERVAL_MS = 5000;
+const SLOW_POLL_INTERVAL_MS = 20000;
 const SLOW_POLL_AFTER_MS = 60 * 1000;
+// While status checks are failing, back right off: the server may be busy
+// or restarting, and the host's edge can start challenging a client that
+// keeps hammering it.
+const TROUBLE_POLL_INTERVAL_MS = 45000;
 // Give up on a recording still "processing" this long after it was created:
 // STT is capped at 3 hours server-side (see stt/poll.ts), so past this the
 // server almost certainly restarted mid-run and will never finish it.
 const STALE_AFTER_MS = 4 * 60 * 60 * 1000;
-// Consecutive failed status checks tolerated before giving up — covers a
-// dropped connection or the server briefly restarting.
-const MAX_POLL_FAILURES = 10;
+// Consecutive failed status checks before telling the user about it. Not a
+// reason to give up: the recording is still being processed server-side
+// whether or not this page can currently reach it.
+const POLL_FAILURES_BEFORE_NOTICE = 3;
+
+/** Waits `ms`, or less if the page comes back into view (screen unlocked, tab reopened). */
+function waitOrUntilVisible(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      resolve();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") done();
+    };
+    const timer = setTimeout(done, ms);
+    document.addEventListener("visibilitychange", onVisible);
+  });
+}
 
 /**
  * res.json() on an empty or non-JSON body (a gateway timeout, a host error
@@ -110,8 +133,12 @@ export default function Home() {
 
       while (activePolls.current.get(entryId) === session.id) {
         const interval =
-          Date.now() - startedAt > SLOW_POLL_AFTER_MS ? SLOW_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
-        await new Promise((r) => setTimeout(r, interval));
+          failures >= POLL_FAILURES_BEFORE_NOTICE
+            ? TROUBLE_POLL_INTERVAL_MS
+            : Date.now() - startedAt > SLOW_POLL_AFTER_MS
+              ? SLOW_POLL_INTERVAL_MS
+              : POLL_INTERVAL_MS;
+        await waitOrUntilVisible(interval);
         if (activePolls.current.get(entryId) !== session.id) return;
 
         let latest: Session | null = null;
@@ -129,26 +156,34 @@ export default function Home() {
         if (activePolls.current.get(entryId) !== session.id) return;
 
         if (latest?.status === "ready") {
-          updateEntry(entryId, { status: "ready", session: latest, errorMessage: null });
+          updateEntry(entryId, {
+            status: "ready",
+            session: latest,
+            errorMessage: null,
+            unreachable: false,
+          });
         } else if (latest?.status === "error") {
           updateEntry(entryId, {
             status: "error",
             errorMessage: latest.errorMessage || "Something went wrong.",
             session: latest,
+            unreachable: false,
           });
         } else {
           failures = latest ? 0 : failures + 1;
-          if (!fatal && failures >= MAX_POLL_FAILURES) {
-            fatal = "Lost contact with the server while processing. Reload the page to check on this recording.";
-          }
           if (!fatal && Date.now() - startedAt > STALE_AFTER_MS) {
             fatal = "Processing was interrupted before it finished. Please try again.";
           }
           if (!fatal) {
-            if (latest) updateEntry(entryId, { session: latest });
+            // A failed check says nothing about the recording itself, so
+            // keep waiting — just say so, and check less often.
+            updateEntry(entryId, {
+              ...(latest ? { session: latest } : {}),
+              unreachable: failures >= POLL_FAILURES_BEFORE_NOTICE,
+            });
             continue;
           }
-          updateEntry(entryId, { status: "error", errorMessage: fatal });
+          updateEntry(entryId, { status: "error", errorMessage: fatal, unreachable: false });
         }
         activePolls.current.delete(entryId);
         return;
@@ -199,7 +234,12 @@ export default function Home() {
   const submit = useCallback(
     async (entryId: string, entryMode: SessionMode, entryFile: File | null, useSample: boolean) => {
       activePolls.current.delete(entryId);
-      updateEntry(entryId, { status: "processing", errorMessage: null, session: null });
+      updateEntry(entryId, {
+        status: "processing",
+        errorMessage: null,
+        session: null,
+        unreachable: false,
+      });
       try {
         const form = new FormData();
         form.append("mode", entryMode);
@@ -472,7 +512,9 @@ export default function Home() {
                 <span className="h-2 w-2 animate-pulse rounded-full bg-muted" />
                 {!selected.session
                   ? "Uploading — keep this page open and the screen on until the upload finishes."
-                  : selected.session.status === "analyzing"
+                  : selected.unreachable
+                    ? "Can't reach the server right now — still trying. Your recording is still being processed, so there's no need to upload it again."
+                    : selected.session.status === "analyzing"
                     ? "Transcribed — now analyzing…"
                     : "Transcribing — an hour-long recording can take 10 minutes or more. It carries on if your screen turns off; the report will be here when you come back."}
               </div>

@@ -92,6 +92,13 @@ export interface Session {
   audioDurationSec?: number;
   audioFile?: string;
   errorMessage?: string;
+  /**
+   * Refreshed every half minute while the server is still working on this
+   * session. A session that is still "transcribing"/"analyzing" with a stale
+   * heartbeat was cut off mid-run (the server restarted — a redeploy, a
+   * crash) and will never finish; see api/sessions/[id]/route.ts.
+   */
+  heartbeatAt?: string;
   report?: MeetingReport;
   /**
    * Estimated USD cost of this session's Gemini calls, from real token

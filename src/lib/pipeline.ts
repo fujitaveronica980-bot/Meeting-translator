@@ -5,7 +5,9 @@ import { getAnalysisProvider } from "@/lib/llm";
 import { mockAnalysisProvider } from "@/lib/llm/mock";
 import type { AnalysisInputLine } from "@/lib/llm";
 import type { MeetingReport, Session, SessionMode, TranscriptLine } from "@/lib/types";
-import { saveSession } from "@/lib/session-store";
+import { saveSession, touchSession } from "@/lib/session-store";
+
+const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 
 /**
  * Registers a new session and saves it in its initial "transcribing" state,
@@ -21,6 +23,7 @@ export async function createSession(params: {
     mode: params.mode,
     status: "transcribing",
     audioFile: params.filename,
+    heartbeatAt: new Date().toISOString(),
   };
   await saveSession(session);
   return session;
@@ -51,6 +54,16 @@ export async function processSession(
     useSample?: boolean;
   }
 ): Promise<Session> {
+  // Proof of life for whoever is polling: if this process dies mid-run the
+  // heartbeat stops, and the session can be reported as interrupted instead
+  // of sitting at "transcribing" forever.
+  const heartbeat = setInterval(() => {
+    session.heartbeatAt = new Date().toISOString();
+    touchSession(session.id, session.heartbeatAt).catch((err) =>
+      console.error(`Failed to save heartbeat for session ${session.id}:`, err)
+    );
+  }, HEARTBEAT_INTERVAL_MS);
+
   try {
     const stt = params.useSample ? mockProvider : getSttProvider();
     const transcription = await stt.transcribe(params.audio, {
@@ -140,6 +153,8 @@ export async function processSession(
     await saveSession(session).catch((saveErr) =>
       console.error(`Failed to save error state for session ${session.id}:`, saveErr)
     );
+  } finally {
+    clearInterval(heartbeat);
   }
 
   return session;

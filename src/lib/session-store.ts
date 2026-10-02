@@ -31,6 +31,20 @@ export async function saveSession(session: Session): Promise<void> {
   memoryStore.set(session.id, session);
 }
 
+/**
+ * Updates only the heartbeat field, never the whole document — it runs on a
+ * timer alongside the pipeline's own saves, and a full overwrite landing
+ * late could put a finished session back to "transcribing".
+ */
+export async function touchSession(id: string, heartbeatAt: string): Promise<void> {
+  if (isFirestoreConfigured()) {
+    await getDb().collection(COLLECTION).doc(id).update({ heartbeatAt });
+    return;
+  }
+  const session = memoryStore.get(id);
+  if (session) session.heartbeatAt = heartbeatAt;
+}
+
 export async function getSession(id: string): Promise<Session | undefined> {
   if (isFirestoreConfigured()) {
     const doc = await getDb().collection(COLLECTION).doc(id).get();
