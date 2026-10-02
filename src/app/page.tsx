@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Session, SessionMode } from "@/lib/types";
 import { ReportView } from "@/components/ReportView";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
+import { useScreenWakeLock } from "@/hooks/useScreenWakeLock";
 
 const MODES: { value: SessionMode; label: string }[] = [
   { value: "meeting", label: "Meeting" },
@@ -294,6 +295,12 @@ export default function Home() {
     });
   });
 
+  // An entry has no server session until its upload has gone through. The
+  // screen has to stay on for recording and uploading — the browser stops
+  // both when it locks — but not after that: processing is server-side.
+  const uploading = recordings.some((r) => r.status === "processing" && !r.session);
+  useScreenWakeLock(recorder.status === "recording" || uploading);
+
   const selected = recordings.find((r) => r.id === selectedId) ?? null;
 
   // Real-usage-based estimate (see gemini.ts), summed across whatever's
@@ -389,6 +396,7 @@ export default function Home() {
               <p className="text-xs text-muted/80">
                 Uses your microphone. Hit stop when the meeting ends — it starts processing right
                 away, and the recording stays in the list on the right no matter what happens next.
+                The screen is kept on while recording: a browser stops recording if it locks.
               </p>
               {recorder.status === "error" && (
                 <p className="text-xs text-red-600 dark:text-red-400">{recorder.error}</p>
@@ -462,9 +470,11 @@ export default function Home() {
             {selected?.status === "processing" && (
               <div className="flex items-center gap-2 rounded-lg border border-border bg-surface p-3 text-sm text-muted">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-muted" />
-                {selected.session?.status === "analyzing"
-                  ? "Transcribed — now analyzing…"
-                  : "Transcribing — an hour-long recording can take 10 minutes or more. Keep this page open until it finishes."}
+                {!selected.session
+                  ? "Uploading — keep this page open and the screen on until the upload finishes."
+                  : selected.session.status === "analyzing"
+                    ? "Transcribed — now analyzing…"
+                    : "Transcribing — an hour-long recording can take 10 minutes or more. It carries on if your screen turns off; the report will be here when you come back."}
               </div>
             )}
 

@@ -1,5 +1,6 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { createSession, processSession } from "@/lib/pipeline";
+import { keepAwakeWhile } from "@/lib/keep-awake";
 import { listSessions } from "@/lib/session-store";
 import type { SessionMode } from "@/lib/types";
 
@@ -46,8 +47,11 @@ export async function POST(req: NextRequest) {
     // Respond as soon as the upload is in, and do the slow part afterwards:
     // holding the request open for the whole transcription made long
     // recordings fail with an empty response once the host gave up on it.
-    // The client polls GET /api/sessions/[id] for the result.
-    after(() => processSession(session, { audio, filename, mimeType, useSample }));
+    // The client polls GET /api/sessions/[id] for the result — but may not
+    // be around to (screen off, page closed), hence keepAwakeWhile.
+    after(() =>
+      keepAwakeWhile(() => processSession(session, { audio, filename, mimeType, useSample }))
+    );
 
     return NextResponse.json(session, { status: 202 });
   } catch (err) {
