@@ -12,13 +12,12 @@ export interface Bilingual {
   en: string;
 }
 
+/** One line of the raw Japanese transcript, as it came back from STT. */
 export interface TranscriptLine {
-  id: string;
   speaker: string;
   startMs: number;
   endMs: number;
   japanese: string;
-  english: string;
 }
 
 export interface GlossaryTerm {
@@ -74,7 +73,12 @@ export interface MeetingReport {
   recommendations: Bilingual[];
   glossary: GlossaryTerm[];
   culturalNotes: CulturalNote[];
-  transcript: TranscriptLine[];
+  /**
+   * Reports don't carry the transcript — only the analysis of it. The one
+   * exception is when analysis failed: the raw Japanese transcript is kept
+   * here so a transcription that was already paid for isn't thrown away.
+   */
+  rawTranscript?: TranscriptLine[];
   /** Casual mode only: example replies you could give back, in the moment. */
   suggestedReplies?: SuggestedReplyGroup[];
 }

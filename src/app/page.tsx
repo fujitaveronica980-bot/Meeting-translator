@@ -37,12 +37,16 @@ interface RecordingEntry {
   errorMessage: string | null;
 }
 
-// How often to ask the server whether a recording has finished processing.
+// How often to ask the server whether a recording has finished processing:
+// quick at first so a short clip comes back promptly, then eased off, since
+// an hour-long recording can take a good while to transcribe.
 const POLL_INTERVAL_MS = 3000;
+const SLOW_POLL_INTERVAL_MS = 10000;
+const SLOW_POLL_AFTER_MS = 60 * 1000;
 // Give up on a recording still "processing" this long after it was created:
-// STT alone is capped at 20 minutes server-side, so past this the server
-// almost certainly restarted mid-run and will never finish it.
-const STALE_AFTER_MS = 60 * 60 * 1000;
+// STT is capped at 3 hours server-side (see stt/poll.ts), so past this the
+// server almost certainly restarted mid-run and will never finish it.
+const STALE_AFTER_MS = 4 * 60 * 60 * 1000;
 // Consecutive failed status checks tolerated before giving up — covers a
 // dropped connection or the server briefly restarting.
 const MAX_POLL_FAILURES = 10;
@@ -104,7 +108,9 @@ export default function Home() {
       let failures = 0;
 
       while (activePolls.current.get(entryId) === session.id) {
-        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        const interval =
+          Date.now() - startedAt > SLOW_POLL_AFTER_MS ? SLOW_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
+        await new Promise((r) => setTimeout(r, interval));
         if (activePolls.current.get(entryId) !== session.id) return;
 
         let latest: Session | null = null;
@@ -323,7 +329,7 @@ export default function Home() {
             </div>
             <p className="text-sm text-white/85">
               Record live or upload a Japanese meeting recording to get a bilingual (JA/EN)
-              transcript, summary, action items, glossary, and cultural notes.
+              summary, key topics, action items, glossary, and cultural notes.
             </p>
           </header>
 
@@ -457,8 +463,8 @@ export default function Home() {
               <div className="flex items-center gap-2 rounded-lg border border-border bg-surface p-3 text-sm text-muted">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-muted" />
                 {selected.session?.status === "analyzing"
-                  ? "Transcribed — now translating & analyzing…"
-                  : "Transcribing — this can take several minutes for a long recording. You can leave this page open."}
+                  ? "Transcribed — now analyzing…"
+                  : "Transcribing — an hour-long recording can take 10 minutes or more. Keep this page open until it finishes."}
               </div>
             )}
 

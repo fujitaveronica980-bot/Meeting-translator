@@ -27,7 +27,7 @@ export async function createSession(params: {
 }
 
 /**
- * Runs a created session end to end: STT -> translate/analyze -> assemble
+ * Runs a created session end to end: STT -> analyze -> assemble
  * report, saving progress to the session store as it goes. Deliberately not
  * tied to the request that uploaded the audio — a real recording takes many
  * minutes (STT polls for up to 20), far longer than a host will hold one
@@ -37,7 +37,7 @@ export async function createSession(params: {
 export async function processSession(
   session: Session,
   params: {
-    audio: Buffer;
+    audio: Blob;
     filename?: string;
     mimeType?: string;
     /**
@@ -59,40 +59,25 @@ export async function processSession(
       mimeType: params.mimeType,
     });
 
-    const linesWithIds = transcription.segments.map((seg) => ({
-      id: uuidv4(),
-      ...seg,
-    }));
-
     session.status = "analyzing";
     session.audioDurationSec = Math.round(transcription.durationMs / 1000);
     await saveSession(session);
 
-    const analysisInput: AnalysisInputLine[] = linesWithIds.map((l) => ({
-      id: l.id,
-      speaker: l.speaker,
-      japanese: l.text,
+    const analysisInput: AnalysisInputLine[] = transcription.segments.map((seg) => ({
+      speaker: seg.speaker,
+      startMs: seg.startMs,
+      japanese: seg.text,
     }));
-    const participants = Array.from(new Set(linesWithIds.map((l) => l.speaker)));
+    const participants = Array.from(new Set(transcription.segments.map((seg) => seg.speaker)));
 
-    // Transcription already succeeded and already cost real money — a
-    // translation/analysis failure past this point shouldn't throw that
-    // away. Handled as its own inner try/catch (rather than falling into
-    // the outer one below) so we can still assemble and save a report
-    // containing the raw transcript, just untranslated, instead of nothing.
+    // Transcription already succeeded and already cost real money — an
+    // analysis failure past this point shouldn't throw that away. Handled
+    // as its own inner try/catch (rather than falling into the outer one
+    // below) so we can still save a report carrying the raw transcript —
+    // the only case a report includes it — instead of nothing.
     try {
       const llm = params.useSample ? mockAnalysisProvider : getAnalysisProvider();
       const analysis = await llm.analyze(analysisInput, session.mode);
-
-      const englishById = new Map(analysis.transcriptEnglish.map((t) => [t.id, t.english]));
-      const transcript: TranscriptLine[] = linesWithIds.map((l) => ({
-        id: l.id,
-        speaker: l.speaker,
-        startMs: l.startMs,
-        endMs: l.endMs,
-        japanese: l.text,
-        english: englishById.get(l.id) ?? "",
-      }));
 
       const report: MeetingReport = {
         title: analysis.title,
@@ -106,7 +91,6 @@ export async function processSession(
         recommendations: analysis.recommendations,
         glossary: analysis.glossary,
         culturalNotes: analysis.culturalNotes,
-        transcript,
         suggestedReplies: analysis.suggestedReplies,
       };
 
@@ -117,33 +101,33 @@ export async function processSession(
     } catch (analysisErr) {
       const message = analysisErr instanceof Error ? analysisErr.message : String(analysisErr);
       session.status = "error";
-      session.errorMessage = `Transcription succeeded, but translation/analysis failed: ${message}`;
+      session.errorMessage = `Transcription succeeded, but analysis failed: ${message}`;
       session.report = {
         title: {
           ja: "文字起こしのみ（分析エラー）",
-          en: "Transcript only (translation/analysis failed)",
+          en: "Transcript only (analysis failed)",
         },
         mode: session.mode,
         durationMs: transcription.durationMs,
         recordedAt: session.createdAt,
         participants,
         executiveSummary: {
-          ja: ["翻訳・分析に失敗しましたが、文字起こし自体は完了しています。下記をご確認ください。"],
-          en: ["Translation/analysis failed, but the transcription itself succeeded — see below."],
+          ja: ["分析に失敗しましたが、文字起こし自体は完了しています。下記をご確認ください。"],
+          en: ["Analysis failed, but the transcription itself succeeded — the raw Japanese transcript is below."],
         },
         keyTopics: [],
         actionItems: [],
         recommendations: [],
         glossary: [],
         culturalNotes: [],
-        transcript: linesWithIds.map((l) => ({
-          id: l.id,
-          speaker: l.speaker,
-          startMs: l.startMs,
-          endMs: l.endMs,
-          japanese: l.text,
-          english: "[translation unavailable]",
-        })),
+        rawTranscript: transcription.segments.map(
+          (seg): TranscriptLine => ({
+            speaker: seg.speaker,
+            startMs: seg.startMs,
+            endMs: seg.endMs,
+            japanese: seg.text,
+          })
+        ),
       };
     }
 

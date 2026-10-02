@@ -1,4 +1,5 @@
 import type { SttProvider, TranscribeOptions, TranscriptionResult, DiarizedSegment } from "./types";
+import { PollFatalError, pollUntilDone, statusCheckError } from "./poll";
 
 /**
  * Speechmatics Batch Transcription API adapter.
@@ -19,24 +20,20 @@ import type { SttProvider, TranscribeOptions, TranscriptionResult, DiarizedSegme
 const REGION = process.env.SPEECHMATICS_REGION || "eu1";
 const BASE_URL = `https://${REGION}.asr.api.speechmatics.com/v2`;
 
-async function pollUntilDone(jobId: string, apiKey: string, timeoutMs = 20 * 60 * 1000): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+function waitForJob(jobId: string, apiKey: string): Promise<true> {
+  return pollUntilDone("Speechmatics", async () => {
     const res = await fetch(`${BASE_URL}/jobs/${jobId}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
-    if (!res.ok) {
-      throw new Error(`Speechmatics job status check failed: ${res.status} ${await res.text()}`);
-    }
+    if (!res.ok) throw statusCheckError("Speechmatics", res.status, await res.text());
     const body = await res.json();
     const status = body?.job?.status;
-    if (status === "done") return;
+    if (status === "done") return true;
     if (status === "rejected") {
-      throw new Error(`Speechmatics job rejected: ${JSON.stringify(body)}`);
+      throw new PollFatalError(`Speechmatics job rejected: ${JSON.stringify(body)}`);
     }
-    await new Promise((r) => setTimeout(r, 4000));
-  }
-  throw new Error("Speechmatics job timed out waiting for transcription to complete");
+    return undefined;
+  });
 }
 
 function parseJsonV2Transcript(results: unknown[]): { segments: DiarizedSegment[]; durationMs: number } {
@@ -93,7 +90,7 @@ export const speechmaticsProvider: SttProvider = {
   name: "speechmatics",
   freeTierMinutesPerMonth: 480,
 
-  async transcribe(audio: Buffer, opts: TranscribeOptions): Promise<TranscriptionResult> {
+  async transcribe(audio: Blob, opts: TranscribeOptions): Promise<TranscriptionResult> {
     const apiKey = process.env.SPEECHMATICS_API_KEY;
     if (!apiKey) {
       throw new Error("SPEECHMATICS_API_KEY is not set");
@@ -115,7 +112,7 @@ export const speechmaticsProvider: SttProvider = {
     form.append("config", JSON.stringify(config));
     form.append(
       "data_file",
-      new Blob([new Uint8Array(audio)], { type: opts.mimeType || "audio/webm" }),
+      audio.type ? audio : new Blob([audio], { type: opts.mimeType || "audio/webm" }),
       opts.filename || "audio.webm"
     );
 
@@ -129,7 +126,7 @@ export const speechmaticsProvider: SttProvider = {
     }
     const { id: jobId } = await createRes.json();
 
-    await pollUntilDone(jobId, apiKey);
+    await waitForJob(jobId, apiKey);
 
     const transcriptRes = await fetch(`${BASE_URL}/jobs/${jobId}/transcript?format=json-v2`, {
       headers: { Authorization: `Bearer ${apiKey}` },

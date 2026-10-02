@@ -84,9 +84,12 @@ export function reportToMarkdown(report: MeetingReport): string {
     }
   }
 
-  lines.push("## Transcript / 文字起こし", "");
-  for (const line of report.transcript) {
-    lines.push(`**${line.speaker}** [${ms(line.startMs)}] ${line.japanese}`, "", line.english, "");
+  // Only present when analysis failed — a normal report has no transcript.
+  if (report.rawTranscript && report.rawTranscript.length > 0) {
+    lines.push("## Raw Transcript / 文字起こし", "");
+    for (const line of report.rawTranscript) {
+      lines.push(`**${line.speaker}** [${ms(line.startMs)}] ${line.japanese}`, "");
+    }
   }
 
   return lines.join("\n");

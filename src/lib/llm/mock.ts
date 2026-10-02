@@ -10,23 +10,17 @@ import type { AnalysisInputLine, AnalysisProvider, AnalysisResult } from "./type
  * returns a hand-written, accurate bilingual analysis for it. For any other
  * input (e.g. a real recording transcribed by a real STT provider, but no
  * GEMINI_API_KEY set) it falls back to a clearly-labeled placeholder
- * translation rather than pretending to translate.
+ * report rather than pretending to analyze.
  */
 
-const KNOWN_JAPANESE_TO_ENGLISH: Record<string, string> = {
-  "本日はお時間をいただきありがとうございます。早速ですが、新しい価格プランについてご説明させていただきます。":
-    "Thank you for making time today. Let's get right into it — I'd like to walk you through our new pricing plan.",
-  "はい、よろしくお願いします。御社の新しいプランは来月から適用ということでよろしいでしょうか。":
-    "Sure, thanks. Just to confirm, your new plan takes effect starting next month, is that right?",
-  "そうですね、基本的には来月からを予定しておりますが、貴社の場合は少し検討させていただければと思います。":
-    "That's right, next month is the general schedule, but for your company specifically I'd like to look into some options.",
-  "承知しました。ただ、正直に申し上げますと、予算的には少し厳しい状況でして。":
-    "Understood. Though to be honest, our budget situation is a bit tight right now.",
-  "なるほど、そのあたりは弊社としても柔軟に対応できる部分がございますので、また改めてご相談させてください。":
-    "I see. That's an area where we do have some flexibility, so let's revisit it in more detail soon.",
-  "ありがとうございます。では次回、具体的な数字を持って再度お話しできればと思います。":
-    "Thank you. In that case, let's plan to come back next time with concrete numbers to discuss.",
-};
+const KNOWN_DIALOGUE = new Set([
+  "本日はお時間をいただきありがとうございます。早速ですが、新しい価格プランについてご説明させていただきます。",
+  "はい、よろしくお願いします。御社の新しいプランは来月から適用ということでよろしいでしょうか。",
+  "そうですね、基本的には来月からを予定しておりますが、貴社の場合は少し検討させていただければと思います。",
+  "承知しました。ただ、正直に申し上げますと、予算的には少し厳しい状況でして。",
+  "なるほど、そのあたりは弊社としても柔軟に対応できる部分がございますので、また改めてご相談させてください。",
+  "ありがとうございます。では次回、具体的な数字を持って再度お話しできればと思います。",
+]);
 
 export const mockAnalysisProvider: AnalysisProvider = {
   name: "mock",
@@ -36,14 +30,7 @@ export const mockAnalysisProvider: AnalysisProvider = {
   // from. Real casual-mode replies only come from the Gemini provider.
   async analyze(lines: AnalysisInputLine[], _mode: SessionMode): Promise<AnalysisResult> {
     void _mode;
-    const isKnownDialogue = lines.every((l) => l.japanese in KNOWN_JAPANESE_TO_ENGLISH);
-
-    const transcriptEnglish = lines.map((l) => ({
-      id: l.id,
-      english:
-        KNOWN_JAPANESE_TO_ENGLISH[l.japanese] ??
-        "[translation unavailable — set GEMINI_API_KEY to enable real translation]",
-    }));
+    const isKnownDialogue = lines.every((l) => KNOWN_DIALOGUE.has(l.japanese));
 
     if (!isKnownDialogue) {
       return {
@@ -51,7 +38,6 @@ export const mockAnalysisProvider: AnalysisProvider = {
           ja: "会議（分析にはGEMINI_API_KEYが必要です）",
           en: "Meeting (set GEMINI_API_KEY for real analysis)",
         },
-        transcriptEnglish,
         executiveSummary: {
           ja: ["GEMINI_API_KEY が設定されていないため、要約は生成されていません。"],
           en: ["No GEMINI_API_KEY is configured, so no summary was generated."],
@@ -69,7 +55,6 @@ export const mockAnalysisProvider: AnalysisProvider = {
         ja: "新価格プランに関する打ち合わせ",
         en: "Discussion on the New Pricing Plan",
       },
-      transcriptEnglish,
       executiveSummary: {
         ja: [
           "サプライヤーが新しい価格プランを来月から導入予定であることを説明した。",

@@ -320,23 +320,26 @@ export function ReportView({ report }: { report: MeetingReport }) {
         </Section>
       )}
 
-      <Section title="Transcript / 文字起こし" section="transcript">
-        <div className="flex flex-col gap-2">
-          {report.transcript.map((line) => (
-            <div
-              key={line.id}
-              className="flex gap-3 rounded-lg p-3"
-              style={{ backgroundColor: `${SECTION_STYLES.transcript.color}10` }}
-            >
-              <div className="w-16 shrink-0 text-xs text-muted/70">
-                <div className="font-medium">{line.speaker}</div>
-                <div>{ms(line.startMs)}</div>
+      {/* Only present when analysis failed — a normal report has no transcript. */}
+      {report.rawTranscript && report.rawTranscript.length > 0 && (
+        <Section title="Raw Transcript / 文字起こし" section="transcript">
+          <div className="flex flex-col gap-2">
+            {report.rawTranscript.map((line, i) => (
+              <div
+                key={i}
+                className="flex gap-3 rounded-lg p-3"
+                style={{ backgroundColor: `${SECTION_STYLES.transcript.color}10` }}
+              >
+                <div className="w-16 shrink-0 text-xs text-muted/70">
+                  <div className="font-medium">{line.speaker}</div>
+                  <div>{ms(line.startMs)}</div>
+                </div>
+                <p className="text-foreground">{line.japanese}</p>
               </div>
-              <Bilingual ja={line.japanese} en={line.english} />
-            </div>
-          ))}
-        </div>
-      </Section>
+            ))}
+          </div>
+        </Section>
+      )}
     </div>
   );
 }

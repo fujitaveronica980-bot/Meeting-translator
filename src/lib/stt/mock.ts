@@ -8,7 +8,7 @@ export const mockProvider: SttProvider = {
   name: "mock",
   freeTierMinutesPerMonth: Infinity,
 
-  async transcribe(_audio: Buffer, opts: TranscribeOptions): Promise<TranscriptionResult> {
+  async transcribe(_audio: Blob, opts: TranscribeOptions): Promise<TranscriptionResult> {
     const segments = [
       { speaker: "S1", startMs: 0, endMs: 4200, text: "本日はお時間をいただきありがとうございます。早速ですが、新しい価格プランについてご説明させていただきます。" },
       { speaker: "S2", startMs: 4400, endMs: 8100, text: "はい、よろしくお願いします。御社の新しいプランは来月から適用ということでよろしいでしょうか。" },

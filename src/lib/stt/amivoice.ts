@@ -1,4 +1,5 @@
 import type { SttProvider, TranscribeOptions, TranscriptionResult, DiarizedSegment } from "./types";
+import { PollFatalError, pollUntilDone, statusCheckError } from "./poll";
 
 /**
  * AmiVoice Cloud Platform - Asynchronous HTTP API adapter.
@@ -32,30 +33,26 @@ interface AmiVoiceResult {
   segments?: AmiVoiceUtterance[];
 }
 
-async function pollUntilDone(sessionId: string, apiKey: string, timeoutMs = 20 * 60 * 1000): Promise<AmiVoiceResult> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
+function waitForJob(sessionId: string, apiKey: string): Promise<AmiVoiceResult> {
+  return pollUntilDone("AmiVoice", async () => {
     const res = await fetch(`${BASE_URL}/${sessionId}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
-    if (!res.ok) {
-      throw new Error(`AmiVoice status check failed: ${res.status} ${await res.text()}`);
-    }
+    if (!res.ok) throw statusCheckError("AmiVoice", res.status, await res.text());
     const body: AmiVoiceResult = await res.json();
     if (body.status === "completed" || body.status === "done") return body;
     if (body.status === "error" || body.status === "failed") {
-      throw new Error(`AmiVoice job failed: ${JSON.stringify(body)}`);
+      throw new PollFatalError(`AmiVoice job failed: ${JSON.stringify(body)}`);
     }
-    await new Promise((r) => setTimeout(r, 4000));
-  }
-  throw new Error("AmiVoice job timed out waiting for transcription to complete");
+    return undefined;
+  });
 }
 
 export const amivoiceProvider: SttProvider = {
   name: "amivoice",
   freeTierMinutesPerMonth: 60,
 
-  async transcribe(audio: Buffer, opts: TranscribeOptions): Promise<TranscriptionResult> {
+  async transcribe(audio: Blob, opts: TranscribeOptions): Promise<TranscriptionResult> {
     const apiKey = process.env.AMIVOICE_API_KEY;
     if (!apiKey) {
       throw new Error("AMIVOICE_API_KEY is not set");
@@ -75,7 +72,7 @@ export const amivoiceProvider: SttProvider = {
     form.append("d", dParam);
     form.append(
       "a",
-      new Blob([new Uint8Array(audio)], { type: opts.mimeType || "audio/wav" }),
+      audio.type ? audio : new Blob([audio], { type: opts.mimeType || "audio/wav" }),
       opts.filename || "audio.wav"
     );
 
@@ -93,7 +90,7 @@ export const amivoiceProvider: SttProvider = {
       throw new Error(`AmiVoice job creation response missing session id: ${JSON.stringify(created)}`);
     }
 
-    const result = await pollUntilDone(sessionId, apiKey);
+    const result = await waitForJob(sessionId, apiKey);
 
     const utterances = result.utterances || result.segments || [];
     let segments: DiarizedSegment[];

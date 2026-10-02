@@ -25,8 +25,13 @@ export interface SttProvider {
   name: string;
   /** Free-tier monthly minute cap this provider publishes, for quota warnings. */
   freeTierMinutesPerMonth: number;
+  /**
+   * `audio` is the uploaded file as-is (a Blob), not a Buffer — it goes
+   * straight into the provider's multipart request, so a long recording
+   * isn't copied several times over in memory on the way.
+   */
   transcribe(
-    audio: Buffer,
+    audio: Blob,
     opts: TranscribeOptions
   ): Promise<TranscriptionResult>;
 }

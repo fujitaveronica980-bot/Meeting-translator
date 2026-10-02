@@ -32,11 +32,11 @@ export async function POST(req: NextRequest) {
       ? (mode as SessionMode)
       : "meeting";
 
-    let audio = Buffer.alloc(0);
+    let audio: Blob = new Blob([]);
     let filename: string | undefined;
     let mimeType: string | undefined;
     if (file instanceof File) {
-      audio = Buffer.from(await file.arrayBuffer());
+      audio = file;
       filename = file.name;
       mimeType = file.type || undefined;
     }

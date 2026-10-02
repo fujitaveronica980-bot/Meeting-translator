@@ -7,8 +7,8 @@ import type {
 } from "./types";
 
 /**
- * Gemini-backed analysis provider: translates a diarized JA transcript to
- * English and extracts the rest of the bilingual meeting report.
+ * Gemini-backed analysis provider: turns a diarized JA transcript into the
+ * bilingual meeting report.
  *
  * Uses an API key from Google AI Studio (https://aistudio.google.com/apikey).
  * The free tier caps out at a very small number of requests per day per
@@ -24,17 +24,16 @@ import type {
  * recommended model, and flash-lite is the cheapest tier that's still solid
  * for translation/extraction work. Override with GEMINI_MODEL if needed.
  *
- * Translation is done in small chunks (rather than one call asking for the
- * whole transcript back) so a long meeting can't produce one giant, fragile
- * response that risks truncation or a slow timeout — each chunk's output
- * stays small and bounded regardless of meeting length. The report-level
- * analysis (summary/topics/action items/etc.) is a separate call that never
- * echoes the transcript back, so its output also stays small regardless of
- * length; it runs in parallel with translation since neither depends on the
- * other's output.
+ * The whole report comes from a single call that never echoes the
+ * transcript back, so its output stays small and the request count stays
+ * at one no matter how long the recording is — an hour-plus meeting costs
+ * the same one request as a short one, just with more input tokens. (There
+ * used to be a line-by-line English translation of the transcript as well;
+ * it took dozens of extra calls on a long recording, any of which could
+ * sink the whole report, and the transcript is no longer shown.)
  *
- * `mode` steers both calls: translation/analysis register adapts to a
- * casual conversation vs. a business meeting, and "casual" additionally
+ * `mode` steers the call: the analysis register adapts to a casual
+ * conversation vs. a business meeting, and "casual" additionally
  * requests suggestedReplies — example things you could say back, meant for
  * short recorded bursts during a live conversation rather than post-hoc
  * meeting review.
@@ -158,11 +157,13 @@ function buildAnalysisPrompt(mode: SessionMode): string {
       : "a Japanese business meeting";
 
   let prompt = `You are a professional Japanese conversation analyst.
-You will receive a diarized transcript of ${context} as a JSON array of {id, speaker, japanese} lines.
+You will receive a diarized transcript of ${context} as a JSON array of {speaker, startMs, japanese} lines,
+where startMs is when the line begins, in milliseconds from the start of the recording.
 Do not reproduce the transcript in your response. Instead, analyze it and produce:
 - a short bilingual title
 - a bilingual executive summary (3-5 bullet points each language)
-- key topics with approximate start/end times in milliseconds inferred from line order and speaker turns
+- key topics covering the whole recording from start to finish, each with start/end times in
+  milliseconds taken from the startMs of the lines it spans
 - action items with an owner when identifiable from context (leave empty if this doesn't apply, e.g. casual chat)
 - concrete recommendations (or conversational suggestions, if casual)
 - a glossary of notable terms worth flagging for a non-native speaker, with furigana-style reading and translation
@@ -192,35 +193,6 @@ whether..."). For each group:
 
   prompt += "\n\nRespond only with JSON matching the provided schema.";
   return prompt;
-}
-
-const translationSchema = {
-  type: Type.OBJECT,
-  properties: {
-    translations: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: { id: { type: Type.STRING }, english: { type: Type.STRING } },
-        required: ["id", "english"],
-      },
-    },
-  },
-  required: ["translations"],
-};
-
-function buildTranslationPrompt(mode: SessionMode): string {
-  const context =
-    mode === "casual"
-      ? "a casual, informal conversation between friends or acquaintances"
-      : "one business meeting";
-
-  return `You are a professional Japanese-to-English interpreter.
-You will receive a JSON array of {id, speaker, japanese} lines from ${context}.
-For each line, produce a natural, accurate English translation (translate meaning and register,
-not word-for-word — keep it casual/conversational if the source is casual, not stiffly formal).
-Do not alter or omit any line — return exactly one translation per input id.
-Respond only with JSON matching the provided schema.`;
 }
 
 // The free tier occasionally returns 503 ("high demand, try again later") or
@@ -284,70 +256,12 @@ function estimateCostUsd(response: GenerateContentResponse): number {
   return (inputTokens / 1_000_000) * pricing.input + (outputTokens / 1_000_000) * pricing.output;
 }
 
-// Chunk size chosen so a single translation call's output stays small and
-// fast regardless of how long the overall meeting is; concurrency bounds
-// how many chunks are in flight at once so a long meeting doesn't fire off
-// dozens of simultaneous requests.
-const TRANSLATE_CHUNK_SIZE = 40;
-const TRANSLATE_CONCURRENCY = 3;
-
-async function translateChunk(
-  ai: GoogleGenAI,
-  model: string,
-  chunk: AnalysisInputLine[],
-  mode: SessionMode
-): Promise<{ translations: { id: string; english: string }[]; costUsd: number }> {
-  const response = await generateWithRetry(ai, {
-    model,
-    contents: [{ role: "user", parts: [{ text: JSON.stringify(chunk) }] }],
-    config: {
-      systemInstruction: buildTranslationPrompt(mode),
-      responseMimeType: "application/json",
-      responseSchema: translationSchema,
-    },
-  });
-  const parsed = parseJson<{ translations: { id: string; english: string }[] }>(
-    response.text,
-    "a translation chunk",
-    response.candidates?.[0]?.finishReason
-  );
-  return { translations: parsed.translations, costUsd: estimateCostUsd(response) };
-}
-
-async function translateAll(
-  ai: GoogleGenAI,
-  model: string,
-  lines: AnalysisInputLine[],
-  mode: SessionMode
-): Promise<{ translations: { id: string; english: string }[]; costUsd: number }> {
-  const chunks: AnalysisInputLine[][] = [];
-  for (let i = 0; i < lines.length; i += TRANSLATE_CHUNK_SIZE) {
-    chunks.push(lines.slice(i, i + TRANSLATE_CHUNK_SIZE));
-  }
-
-  const results: { id: string; english: string }[][] = new Array(chunks.length);
-  let costUsd = 0;
-  let nextIndex = 0;
-  async function worker() {
-    while (nextIndex < chunks.length) {
-      const i = nextIndex++;
-      const chunkResult = await translateChunk(ai, model, chunks[i], mode);
-      results[i] = chunkResult.translations;
-      costUsd += chunkResult.costUsd;
-    }
-  }
-  const workerCount = Math.min(TRANSLATE_CONCURRENCY, chunks.length);
-  await Promise.all(Array.from({ length: workerCount }, worker));
-
-  return { translations: results.flat(), costUsd };
-}
-
 async function analyzeMeeting(
   ai: GoogleGenAI,
   model: string,
   lines: AnalysisInputLine[],
   mode: SessionMode
-): Promise<{ analysis: Omit<AnalysisResult, "transcriptEnglish" | "estimatedCostUsd">; costUsd: number }> {
+): Promise<{ analysis: Omit<AnalysisResult, "estimatedCostUsd">; costUsd: number }> {
   const response = await generateWithRetry(ai, {
     model,
     contents: [{ role: "user", parts: [{ text: JSON.stringify(lines) }] }],
@@ -357,7 +271,7 @@ async function analyzeMeeting(
       responseSchema: buildAnalysisSchema(mode),
     },
   });
-  const analysis = parseJson<Omit<AnalysisResult, "transcriptEnglish" | "estimatedCostUsd">>(
+  const analysis = parseJson<Omit<AnalysisResult, "estimatedCostUsd">>(
     response.text,
     "the meeting analysis",
     response.candidates?.[0]?.finishReason
@@ -377,15 +291,8 @@ export const geminiAnalysisProvider: AnalysisProvider = {
     const ai = new GoogleGenAI({ apiKey });
     const model = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
 
-    const [translation, meeting] = await Promise.all([
-      translateAll(ai, model, lines, mode),
-      analyzeMeeting(ai, model, lines, mode),
-    ]);
+    const meeting = await analyzeMeeting(ai, model, lines, mode);
 
-    return {
-      ...meeting.analysis,
-      transcriptEnglish: translation.translations,
-      estimatedCostUsd: translation.costUsd + meeting.costUsd,
-    };
+    return { ...meeting.analysis, estimatedCostUsd: meeting.costUsd };
   },
 };
