@@ -1,5 +1,6 @@
 import type { SessionMode } from "@/lib/types";
-import type { AnalysisInputLine, AnalysisProvider, AnalysisResult } from "./types";
+import type { MeetingInsights } from "@/lib/types";
+import type { AnalysisContext, AnalysisInputLine, AnalysisProvider, AnalysisResult } from "./types";
 
 /**
  * Demo/dev provider used automatically when no LLM API key is configured.
@@ -22,13 +23,146 @@ const KNOWN_DIALOGUE = new Set([
   "ありがとうございます。では次回、具体的な数字を持って再度お話しできればと思います。",
 ]);
 
+/**
+ * Hand-written insights for the demo dialogue. The sample casts the reader
+ * as S2 (the customer) whenever they've said who they are, so the "For you"
+ * section has something to show.
+ */
+function sampleInsights(context: AnalysisContext): MeetingInsights {
+  const identified = context.reader.trim() !== "";
+  return {
+    forYou: {
+      speaker: identified ? "S2" : "",
+      basis: identified
+        ? {
+            ja: "サンプルの会話では、顧客側のS2を読み手として扱っています。",
+            en: "In the sample dialogue, the customer (S2) is treated as the reader.",
+          }
+        : {
+            ja: "読み手が誰かが入力されていません。",
+            en: "The reader has not said who they are.",
+          },
+      asked: identified
+        ? [
+            {
+              ja: "次回の打ち合わせで、価格について改めて相談に応じること。",
+              en: "Be ready to discuss pricing again at the next meeting.",
+            },
+          ]
+        : [],
+      committed: identified
+        ? [
+            {
+              ja: "次回、具体的な数字を持って再度話し合う。",
+              en: "Come back next time with concrete figures.",
+            },
+          ]
+        : [],
+      questions: [],
+    },
+    details: [
+      {
+        category: "date",
+        detail: {
+          ja: "新価格プランの適用開始：原則として来月から。",
+          en: "New pricing plan start: next month, as a general rule.",
+        },
+      },
+      {
+        category: "rule",
+        detail: {
+          ja: "この顧客については適用時期を個別に検討する。",
+          en: "For this customer, the start date will be considered individually.",
+        },
+      },
+    ],
+    procedures: [],
+    decisions: [
+      {
+        ja: "次回、具体的な数字をもとに再協議する。",
+        en: "Reconvene next time with concrete figures.",
+      },
+    ],
+    openQuestions: [
+      {
+        question: {
+          ja: "この顧客への適用時期をいつにするか。",
+          en: "When the new plan will apply to this customer.",
+        },
+        owner: "S1",
+      },
+    ],
+    betweenTheLines: [
+      {
+        point: {
+          ja: "「予算的には少し厳しい」は、値上げをそのままでは受け入れられないという遠回しな意思表示とみられます。",
+          en: "\"Our budget is a bit tight\" is likely an indirect way of saying the increase can't be accepted as it stands.",
+        },
+        quote: "正直に申し上げますと、予算的には少し厳しい状況でして。",
+      },
+      {
+        point: {
+          ja: "S1は条件を譲る余地があることを示唆しつつ、具体的な約束は避けています。",
+          en: "S1 signals there is room to move on terms while avoiding any specific promise.",
+        },
+        quote: "柔軟に対応できる部分がございます",
+      },
+    ],
+    followUp: {
+      message: {
+        japanese:
+          "本日はお時間をいただきありがとうございました。新価格プランは原則来月から適用とのこと、承知いたしました。弊社の予算状況を踏まえ、適用時期についてご検討いただけるとのことで感謝申し上げます。次回は具体的な数字を持参いたしますので、引き続きよろしくお願いいたします。",
+        english:
+          "Thank you for your time today. I understand the new pricing plan generally takes effect next month. I appreciate your willingness to consider the timing in light of our budget situation. I will bring concrete figures next time, and look forward to continuing the discussion.",
+      },
+      questions: [
+        {
+          japanese: "適用時期を延ばしていただく場合、どのくらいの期間が可能でしょうか。",
+          romaji: "Tekiyou jiki o nobashite itadaku baai, dono kurai no kikan ga kanou deshou ka.",
+          english: "If the start date can be pushed back, how long a delay would be possible?",
+        },
+        {
+          japanese: "次回までに、こちらで準備しておくべき資料はありますか。",
+          romaji: "Jikai made ni, kochira de junbi shite oku beki shiryou wa arimasu ka.",
+          english: "Is there anything we should prepare before the next meeting?",
+        },
+      ],
+    },
+    people: [
+      {
+        speaker: "S1",
+        name: "",
+        role: { ja: "サプライヤー側の担当者", en: "Supplier-side representative" },
+        caresAbout: {
+          ja: "新価格プランを導入しつつ、顧客との関係を保つこと。",
+          en: "Introducing the new pricing while keeping the customer relationship intact.",
+        },
+      },
+      {
+        speaker: "S2",
+        name: "",
+        role: { ja: "顧客側の担当者", en: "Customer-side representative" },
+        caresAbout: {
+          ja: "予算内に収めること、適用時期の猶予。",
+          en: "Staying within budget and getting more time before the new plan applies.",
+        },
+      },
+    ],
+    carriedOver: [],
+  };
+}
+
 export const mockAnalysisProvider: AnalysisProvider = {
   name: "mock",
 
   // `_mode` unused: the canned demo dialogue is a fixed business negotiation
   // regardless of mode, so mock has no casual content to draw suggestedReplies
   // from. Real casual-mode replies only come from the Gemini provider.
-  async analyze(lines: AnalysisInputLine[], _mode: SessionMode): Promise<AnalysisResult> {
+  async analyze(
+    lines: AnalysisInputLine[],
+    _mode: SessionMode,
+    context: AnalysisContext
+  ): Promise<AnalysisResult> {
     void _mode;
     const isKnownDialogue = lines.every((l) => KNOWN_DIALOGUE.has(l.japanese));
 
@@ -55,6 +189,33 @@ export const mockAnalysisProvider: AnalysisProvider = {
         ja: "新価格プランに関する打ち合わせ",
         en: "Discussion on the New Pricing Plan",
       },
+      overview: {
+        ja: "サプライヤーが新しい価格プランを顧客に説明した打ち合わせです。適用時期は顧客の予算事情を踏まえて再検討することになり、次回、具体的な数字をもとに再協議します。",
+        en: "A supplier presented its new pricing plan to a customer. The start date will be reconsidered in light of the customer's budget, and both sides will meet again with concrete figures.",
+      },
+      keyPoints: [
+        {
+          headline: { ja: "新価格プランは来月から適用の予定。", en: "The new pricing plan is due to start next month." },
+          detail: {
+            ja: "ただし、この顧客については個別に検討する余地があるとサプライヤーが述べました。",
+            en: "The supplier said it can look at this customer's case individually.",
+          },
+        },
+        {
+          headline: { ja: "顧客側は予算が厳しい。", en: "The customer's budget is tight." },
+          detail: {
+            ja: "予算上の制約を理由に、適用時期について柔軟な対応を求めました。",
+            en: "The customer cited budget constraints and asked for flexibility on timing.",
+          },
+        },
+        {
+          headline: { ja: "次回、具体的な数字で再協議する。", en: "Both sides will reconvene with concrete figures." },
+          detail: {
+            ja: "サプライヤーには柔軟に対応できる部分があり、詳細は次回の打ち合わせで詰めます。",
+            en: "The supplier has some room to be flexible; the details will be settled at the next meeting.",
+          },
+        },
+      ],
       executiveSummary: {
         ja: [
           "サプライヤーが新しい価格プランを来月から導入予定であることを説明した。",
@@ -96,6 +257,7 @@ export const mockAnalysisProvider: AnalysisProvider = {
             en: "Prepare concrete pricing figures before the next meeting.",
           },
           owner: "S2",
+          due: { ja: "次回打ち合わせまで", en: "Before the next meeting" },
         },
         {
           description: {
@@ -116,14 +278,23 @@ export const mockAnalysisProvider: AnalysisProvider = {
           term: "価格プラン",
           reading: "かかくプラン",
           translation: "pricing plan",
+          meaning: {
+            ja: "製品やサービスの料金体系をまとめた案。",
+            en: "A proposed structure of prices for a product or service.",
+          },
         },
         {
           term: "御社",
           reading: "おんしゃ",
           translation: "your company",
           note: "Polite/formal way to refer to the listener's company in business Japanese.",
+          meaning: {
+            ja: "相手の会社を指す丁寧な言い方（話し言葉）。",
+            en: "A polite spoken way of referring to the other party's company.",
+          },
         },
       ],
+      insights: sampleInsights(context),
       culturalNotes: [
         {
           quote: {

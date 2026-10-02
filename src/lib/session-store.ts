@@ -45,6 +45,16 @@ export async function touchSession(id: string, heartbeatAt: string): Promise<voi
   if (session) session.heartbeatAt = heartbeatAt;
 }
 
+/** Field-only for the same reason as touchSession: never rewrite a session from a stale copy. */
+export async function setDoneActions(id: string, doneActions: number[]): Promise<void> {
+  if (isFirestoreConfigured()) {
+    await getDb().collection(COLLECTION).doc(id).update({ doneActions });
+    return;
+  }
+  const session = memoryStore.get(id);
+  if (session) session.doneActions = doneActions;
+}
+
 export async function getSession(id: string): Promise<Session | undefined> {
   if (isFirestoreConfigured()) {
     const doc = await getDb().collection(COLLECTION).doc(id).get();

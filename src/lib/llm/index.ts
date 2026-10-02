@@ -2,7 +2,7 @@ import type { AnalysisProvider } from "./types";
 import { geminiAnalysisProvider } from "./gemini";
 import { mockAnalysisProvider } from "./mock";
 
-export type { AnalysisProvider, AnalysisInputLine, AnalysisResult } from "./types";
+export type { AnalysisContext, AnalysisProvider, AnalysisInputLine, AnalysisResult } from "./types";
 
 /**
  * Provider is selected via LLM_PROVIDER, mirroring src/lib/stt/index.ts, so

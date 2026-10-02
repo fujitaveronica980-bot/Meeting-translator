@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session, SessionMode } from "@/lib/types";
+import { buildMemory } from "@/lib/memory";
+import { MemoryView } from "@/components/MemoryView";
 import { ReportView } from "@/components/ReportView";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useScreenWakeLock } from "@/hooks/useScreenWakeLock";
@@ -91,6 +93,10 @@ async function readJson<T>(res: Response): Promise<T> {
   }
 }
 
+// selectedId value for the "Across meetings" view, which isn't a recording.
+const MEMORY_VIEW = "memory";
+const READER_STORAGE_KEY = "meeting-translator:reader";
+
 function newId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -102,6 +108,25 @@ export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [recordings, setRecordings] = useState<RecordingEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Who the user is in their meetings, in their own words — lets the report
+  // pick out what was asked of them. Remembered on this device.
+  const [reader, setReader] = useState("");
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring a saved value after hydration
+      setReader(localStorage.getItem(READER_STORAGE_KEY) ?? "");
+    } catch {
+      // storage unavailable (private window): the field just starts empty
+    }
+  }, []);
+  const changeReader = useCallback((value: string) => {
+    setReader(value);
+    try {
+      localStorage.setItem(READER_STORAGE_KEY, value);
+    } catch {
+      // not remembered, still used for this upload
+    }
+  }, []);
   const resultRef = useRef<HTMLDivElement | null>(null);
   // Entry id -> the server session currently being polled for it. A poll
   // loop stops as soon as its entry is retried, deleted, or the page unmounts.
@@ -232,7 +257,13 @@ export default function Home() {
   }, [pollSession]);
 
   const submit = useCallback(
-    async (entryId: string, entryMode: SessionMode, entryFile: File | null, useSample: boolean) => {
+    async (
+      entryId: string,
+      entryMode: SessionMode,
+      entryFile: File | null,
+      useSample: boolean,
+      entryReader: string
+    ) => {
       activePolls.current.delete(entryId);
       updateEntry(entryId, {
         status: "processing",
@@ -251,7 +282,11 @@ export default function Home() {
         const res = await fetch(`/api/upload?${query}`, {
           method: "POST",
           body: upload,
-          headers: upload ? { "Content-Type": upload.type || "application/octet-stream" } : undefined,
+          headers: {
+            ...(upload ? { "Content-Type": upload.type || "application/octet-stream" } : {}),
+            // URI-encoded: header values can't carry Japanese as-is.
+            ...(entryReader.trim() ? { "X-Reader": encodeURIComponent(entryReader.trim()) } : {}),
+          },
         });
         const data = await readJson<Session>(res);
 
@@ -294,9 +329,9 @@ export default function Home() {
       };
       setRecordings((prev) => [entry, ...prev]);
       setSelectedId(id);
-      submit(id, mode, opts.file, opts.kind === "sample");
+      submit(id, mode, opts.file, opts.kind === "sample", reader);
     },
-    [mode, submit]
+    [mode, reader, submit]
   );
 
   const retry = useCallback(
@@ -304,9 +339,9 @@ export default function Home() {
       const entry = recordings.find((r) => r.id === entryId);
       if (!entry) return;
       setSelectedId(entryId);
-      submit(entryId, entry.mode, entry.file, entry.kind === "sample");
+      submit(entryId, entry.mode, entry.file, entry.kind === "sample", reader);
     },
-    [recordings, submit]
+    [recordings, reader, submit]
   );
 
   const deleteEntry = useCallback(
@@ -346,6 +381,30 @@ export default function Home() {
 
   const selected = recordings.find((r) => r.id === selectedId) ?? null;
 
+  const memory = useMemo(
+    () => buildMemory(recordings.flatMap((r) => (r.session ? [r.session] : []))),
+    [recordings]
+  );
+  const openActionCount = memory.actions.filter((a) => !a.done).length;
+
+  const toggleAction = useCallback(
+    (sessionId: string, index: number, done: boolean) => {
+      const entry = recordings.find((r) => r.session?.id === sessionId);
+      if (!entry?.session) return;
+      const current = new Set(entry.session.doneActions ?? []);
+      if (done) current.add(index);
+      else current.delete(index);
+      const doneActions = [...current].sort((a, b) => a - b);
+      updateEntry(entry.id, { session: { ...entry.session, doneActions } });
+      fetch(`/api/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ doneActions }),
+      }).catch((err) => console.error("Failed to save action item state:", err));
+    },
+    [recordings, updateEntry]
+  );
+
   // Real-usage-based estimate (see gemini.ts), summed across whatever's
   // currently loaded in the sidebar — not exact billing, but grounded in
   // actual token counts rather than guessed. STT cost isn't included.
@@ -360,11 +419,12 @@ export default function Home() {
 
   // Pull the result panel into view whenever the selected entry changes —
   // covers both "just submitted something" and "clicked an older entry".
+  const showingMemory = selectedId === MEMORY_VIEW;
   useEffect(() => {
-    if (selected && resultRef.current) {
+    if ((selected || showingMemory) && resultRef.current) {
       resultRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-  }, [selected]);
+  }, [selected, showingMemory]);
 
   return (
     <div className="flex flex-1 flex-col bg-background font-sans">
@@ -403,6 +463,25 @@ export default function Home() {
                   </button>
                 ))}
               </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5 border-t border-border/60 pt-4">
+              <label htmlFor="reader" className="text-sm font-medium text-foreground">
+                Who are you in this meeting? <span className="font-normal text-muted">(optional)</span>
+              </label>
+              <input
+                id="reader"
+                type="text"
+                value={reader}
+                onChange={(e) => changeReader(e.target.value)}
+                maxLength={200}
+                placeholder="e.g. 藤田 (Fujita), the new inside-sales contractor"
+                className="min-h-11 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted/60"
+              />
+              <p className="text-xs text-muted/80">
+                With this, the report adds a &ldquo;For you&rdquo; section: what you were asked to do, what
+                you promised, and a recap message written in your voice. Remembered on this device.
+              </p>
             </div>
 
             <div className="flex flex-col gap-1.5 border-t border-border/60 pt-4">
@@ -488,6 +567,8 @@ export default function Home() {
           </div>
 
           <div ref={resultRef} className="flex flex-col gap-8 scroll-mt-6">
+            {showingMemory && <MemoryView memory={memory} onToggleAction={toggleAction} />}
+
             {selected?.audioUrl && (
               <audio controls src={selected.audioUrl} className="w-full">
                 Your browser doesn&apos;t support inline audio playback.
@@ -528,6 +609,19 @@ export default function Home() {
         </div>
 
         <aside className="flex flex-col gap-3 lg:sticky lg:top-12 lg:self-start">
+          <button
+            type="button"
+            onClick={() => setSelectedId(MEMORY_VIEW)}
+            className={`flex min-h-11 items-center justify-between gap-2 rounded-lg border p-3 text-left text-sm transition-colors ${
+              showingMemory ? "border-accent bg-surface" : "border-border bg-surface hover:bg-subtle"
+            }`}
+          >
+            <span className="font-medium text-foreground">Across meetings</span>
+            <span className="text-xs text-muted">
+              {openActionCount} open {openActionCount === 1 ? "action" : "actions"}
+            </span>
+          </button>
+
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">Recordings</h2>
 
           {(totalCostUsd > 0 || budgetJpy) && (

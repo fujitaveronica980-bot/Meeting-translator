@@ -3,9 +3,10 @@ import { getSttProvider } from "@/lib/stt";
 import { mockProvider } from "@/lib/stt/mock";
 import { getAnalysisProvider } from "@/lib/llm";
 import { mockAnalysisProvider } from "@/lib/llm/mock";
-import type { AnalysisInputLine } from "@/lib/llm";
+import type { AnalysisContext, AnalysisInputLine } from "@/lib/llm";
+import { memoryContext } from "@/lib/memory";
 import type { MeetingReport, Session, SessionMode, TranscriptLine } from "@/lib/types";
-import { saveSession, touchSession } from "@/lib/session-store";
+import { listSessions, saveSession, touchSession } from "@/lib/session-store";
 
 const HEARTBEAT_INTERVAL_MS = 30 * 1000;
 
@@ -43,6 +44,8 @@ export async function processSession(
     audio: Blob;
     filename?: string;
     mimeType?: string;
+    /** The reader's own words for who they are in the meeting ("藤田, the new contractor"). */
+    reader?: string;
     /**
      * The "Try sample recording" button: always forces the mock STT + mock
      * analysis providers, regardless of which real providers are configured.
@@ -90,7 +93,17 @@ export async function processSession(
     // the only case a report includes it — instead of nothing.
     try {
       const llm = params.useSample ? mockAnalysisProvider : getAnalysisProvider();
-      const analysis = await llm.analyze(analysisInput, session.mode);
+      // What earlier recordings established. Worth having, not worth
+      // failing over: a broken history lookup just means no context.
+      const earlier = await listSessions().catch((err) => {
+        console.error("Could not load earlier sessions for context:", err);
+        return [];
+      });
+      const context: AnalysisContext = {
+        reader: params.reader ?? "",
+        memory: memoryContext(earlier.filter((s) => s.id !== session.id)),
+      };
+      const analysis = await llm.analyze(analysisInput, session.mode, context);
 
       const report: MeetingReport = {
         title: analysis.title,
@@ -98,6 +111,9 @@ export async function processSession(
         durationMs: transcription.durationMs,
         recordedAt: session.createdAt,
         participants,
+        // Spread rather than assigned: Firestore rejects undefined fields.
+        ...(analysis.overview ? { overview: analysis.overview } : {}),
+        ...(analysis.keyPoints ? { keyPoints: analysis.keyPoints } : {}),
         executiveSummary: analysis.executiveSummary,
         keyTopics: analysis.keyTopics,
         actionItems: analysis.actionItems,
@@ -105,6 +121,7 @@ export async function processSession(
         glossary: analysis.glossary,
         culturalNotes: analysis.culturalNotes,
         suggestedReplies: analysis.suggestedReplies,
+        ...(analysis.insights ? { insights: analysis.insights } : {}),
       };
 
       session.status = "ready";

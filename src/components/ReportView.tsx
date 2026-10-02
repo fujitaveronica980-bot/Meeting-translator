@@ -1,14 +1,55 @@
-import type { MeetingReport } from "@/lib/types";
-import { reportFilename, reportToMarkdown } from "@/lib/reportToMarkdown";
+"use client";
 
-function downloadReport(report: MeetingReport) {
-  const blob = new Blob([reportToMarkdown(report)], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
+import { useState } from "react";
+import type { MeetingReport } from "@/lib/types";
+import { reportFilename } from "@/lib/reportFilename";
+
+/**
+ * The download is a PDF summary laid out for sharing (see lib/report-pdf.ts),
+ * rendered server-side — Japanese text needs an embedded font.
+ */
+async function downloadReport(report: MeetingReport) {
+  const res = await fetch("/api/report-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // The reader's time zone, so the date on the PDF is their date.
+    body: JSON.stringify({ report, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
+  });
+  if (!res.ok) throw new Error(`The server could not create the PDF (HTTP ${res.status}).`);
+  const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");
   a.href = url;
-  a.download = reportFilename(report, "md");
+  a.download = reportFilename(report, "pdf");
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function DownloadButton({ report }: { report: MeetingReport }) {
+  const [state, setState] = useState<"idle" | "working" | "failed">("idle");
+  return (
+    <div className="flex shrink-0 flex-col items-end gap-1">
+      <button
+        type="button"
+        disabled={state === "working"}
+        onClick={async () => {
+          setState("working");
+          try {
+            await downloadReport(report);
+            setState("idle");
+          } catch (err) {
+            console.error("Failed to download report:", err);
+            setState("failed");
+          }
+        }}
+        className="min-h-11 rounded-full border border-border px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-subtle disabled:cursor-wait disabled:opacity-60"
+      >
+        {state === "working" ? "Preparing PDF…" : "Download report (PDF)"}
+      </button>
+      {state === "failed" && (
+        <p className="text-xs text-red-600 dark:text-red-400">Couldn&apos;t create the PDF — try again.</p>
+      )}
+    </div>
+  );
 }
 
 function ms(msTotal: number): string {
@@ -41,6 +82,13 @@ const SECTION_STYLES = {
   glossary: { color: "#4f46e5", icon: "book" },
   cultural: { color: "#db2777", icon: "quote" },
   transcript: { color: "#475569", icon: "mic" },
+  forYou: { color: "#e11d48", icon: "check" },
+  decisions: { color: "#0f766e", icon: "list" },
+  details: { color: "#0369a1", icon: "book" },
+  lines: { color: "#9333ea", icon: "quote" },
+  followUp: { color: "#0891b2", icon: "reply" },
+  people: { color: "#475569", icon: "bubble" },
+  carried: { color: "#b45309", icon: "check" },
 } as const satisfies Record<string, { color: string; icon: keyof typeof ICONS }>;
 
 type SectionKey = keyof typeof SECTION_STYLES;
@@ -126,7 +174,62 @@ function Section({
   );
 }
 
+const DETAIL_LABELS = {
+  number: "Number / 数値",
+  date: "Date / 日付",
+  person: "Person / 人物",
+  tool: "Tool / ツール",
+  rule: "Rule / ルール",
+} as const;
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        } catch (err) {
+          console.error("Failed to copy:", err);
+        }
+      }}
+      className="min-h-9 self-start rounded-full border border-border px-3 py-1 text-xs font-medium text-foreground transition-colors hover:bg-subtle"
+    >
+      {copied ? "Copied" : "Copy Japanese message"}
+    </button>
+  );
+}
+
+function BilingualList({ items, section }: { items: { ja: string; en: string }[]; section: SectionKey }) {
+  return (
+    <ul className="flex flex-col gap-2">
+      {items.map((item, i) => (
+        <li
+          key={i}
+          className="rounded-lg p-3"
+          style={{ backgroundColor: `${SECTION_STYLES[section].color}14` }}
+        >
+          <Bilingual ja={item.ja} en={item.en} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function SubHeading({ children }: { children: React.ReactNode }) {
+  return <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">{children}</h3>;
+}
+
 export function ReportView({ report }: { report: MeetingReport }) {
+  // Absent on older reports, casual clips, and when that analysis call failed.
+  const insights = report.insights;
+  const forYou = insights?.forYou;
+  const hasForYou =
+    forYou && (forYou.asked.length > 0 || forYou.committed.length > 0 || forYou.questions.length > 0);
+
   return (
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
@@ -135,13 +238,7 @@ export function ReportView({ report }: { report: MeetingReport }) {
             <h1 className="text-2xl font-semibold text-foreground">{report.title.ja}</h1>
             <p className="text-lg text-muted">{report.title.en}</p>
           </div>
-          <button
-            type="button"
-            onClick={() => downloadReport(report)}
-            className="min-h-11 shrink-0 rounded-full border border-border px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-subtle"
-          >
-            Download report
-          </button>
+          <DownloadButton report={report} />
         </div>
         <p className="mt-2 text-sm text-muted">
           {report.mode} · {ms(report.durationMs)} · {report.participants.join(", ")}
@@ -194,6 +291,54 @@ export function ReportView({ report }: { report: MeetingReport }) {
         </Section>
       )}
 
+      {forYou && hasForYou && (
+        <Section title="For You / あなた向け" section="forYou">
+          <p className="text-xs text-muted">
+            {forYou.speaker && <span className="font-medium text-foreground">{forYou.speaker} · </span>}
+            {forYou.basis.ja} / {forYou.basis.en}
+          </p>
+          {forYou.asked.length > 0 && (
+            <>
+              <SubHeading>Asked of you / 依頼・期待されたこと</SubHeading>
+              <BilingualList items={forYou.asked} section="forYou" />
+            </>
+          )}
+          {forYou.committed.length > 0 && (
+            <>
+              <SubHeading>You committed to / 自分が約束したこと</SubHeading>
+              <BilingualList items={forYou.committed} section="forYou" />
+            </>
+          )}
+          {forYou.questions.length > 0 && (
+            <>
+              <SubHeading>Questions put to you / 受けた質問</SubHeading>
+              <ul className="flex flex-col gap-2">
+                {forYou.questions.map((q, i) => (
+                  <li
+                    key={i}
+                    className="rounded-lg p-3"
+                    style={{ backgroundColor: `${SECTION_STYLES.forYou.color}14` }}
+                  >
+                    <Bilingual ja={q.question.ja} en={q.question.en} />
+                    <div className="mt-2 border-t border-border/60 pt-2">
+                      <Bilingual ja={q.answer.ja} en={q.answer.en} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </Section>
+      )}
+
+      {insights && forYou && !hasForYou && (
+        <p className="rounded-lg border border-border bg-surface p-3 text-xs text-muted">
+          {forYou.speaker
+            ? "Nothing in this recording was asked of you or promised by you."
+            : "No “For you” section: fill in “Who are you in this meeting?” before uploading and the report will pick out what was asked of you."}
+        </p>
+      )}
+
       <Section title="Executive Summary / 要約" section="summary">
         <ul className="flex flex-col gap-2">
           {report.executiveSummary.ja.map((ja, i) => (
@@ -207,6 +352,37 @@ export function ReportView({ report }: { report: MeetingReport }) {
           ))}
         </ul>
       </Section>
+
+      {insights && (insights.decisions.length > 0 || insights.openQuestions.length > 0) && (
+        <Section title="Decisions & Open Questions / 決定事項と未解決事項" section="decisions">
+          {insights.decisions.length > 0 && (
+            <>
+              <SubHeading>Decided / 決定事項</SubHeading>
+              <BilingualList items={insights.decisions} section="decisions" />
+            </>
+          )}
+          {insights.openQuestions.length > 0 && (
+            <>
+              <SubHeading>Still open / 未解決</SubHeading>
+              <ul className="flex flex-col gap-2">
+                {insights.openQuestions.map((q, i) => (
+                  <li
+                    key={i}
+                    className="rounded-lg border-l-4 p-3"
+                    style={{
+                      borderColor: SECTION_STYLES.decisions.color,
+                      backgroundColor: `${SECTION_STYLES.decisions.color}0d`,
+                    }}
+                  >
+                    <Bilingual ja={q.question.ja} en={q.question.en} />
+                    {q.owner && <p className="mt-1 text-xs text-muted">Answer owed by {q.owner}</p>}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </Section>
+      )}
 
       {report.keyTopics.length > 0 && (
         <Section title="Key Topics / 主なトピック" section="topics">
@@ -233,6 +409,47 @@ export function ReportView({ report }: { report: MeetingReport }) {
         </Section>
       )}
 
+      {insights && (insights.details.length > 0 || insights.procedures.length > 0) && (
+        <Section title="Details Sheet / 詳細メモ" section="details">
+          {insights.details.length > 0 && (
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-left text-sm">
+                <tbody>
+                  {insights.details.map((d, i) => (
+                    <tr key={i} className={i > 0 ? "border-t border-border" : undefined}>
+                      <td className="whitespace-nowrap px-3 py-2 align-top text-xs text-muted">
+                        {DETAIL_LABELS[d.category] ?? d.category}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Bilingual ja={d.detail.ja} en={d.detail.en} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {insights.procedures.map((p, i) => (
+            <div
+              key={i}
+              className="rounded-lg border-l-4 bg-surface p-3 shadow-sm"
+              style={{ borderColor: SECTION_STYLES.details.color }}
+            >
+              <p className="mb-2 font-medium text-foreground">
+                {p.title.ja} <span className="text-muted">/ {p.title.en}</span>
+              </p>
+              <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm">
+                {p.steps.ja.map((step, j) => (
+                  <li key={j}>
+                    <Bilingual ja={step} en={p.steps.en[j] ?? ""} />
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ))}
+        </Section>
+      )}
+
       {report.actionItems.length > 0 && (
         <Section title="Action Items / アクションアイテム" section="actions">
           <ul className="flex flex-col gap-2">
@@ -254,6 +471,29 @@ export function ReportView({ report }: { report: MeetingReport }) {
         </Section>
       )}
 
+      {insights && insights.betweenTheLines.length > 0 && (
+        <Section title="Between the Lines / 行間を読む" section="lines">
+          <p className="text-xs text-muted">
+            Interpretation, not fact — what was probably meant beyond the literal words.
+          </p>
+          <ul className="flex flex-col gap-2">
+            {insights.betweenTheLines.map((b, i) => (
+              <li
+                key={i}
+                className="rounded-lg border-l-4 p-3"
+                style={{
+                  borderColor: SECTION_STYLES.lines.color,
+                  backgroundColor: `${SECTION_STYLES.lines.color}0d`,
+                }}
+              >
+                {b.quote && <p className="mb-1 text-sm text-muted">「{b.quote}」</p>}
+                <Bilingual ja={b.point.ja} en={b.point.en} />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
       {report.recommendations.length > 0 && (
         <Section title="Recommendations / 提案" section="recommendations">
           <ul className="flex flex-col gap-2">
@@ -267,6 +507,83 @@ export function ReportView({ report }: { report: MeetingReport }) {
               </li>
             ))}
           </ul>
+        </Section>
+      )}
+
+      {insights && (insights.followUp.message.japanese || insights.followUp.questions.length > 0) && (
+        <Section title="Follow-up Kit / フォローアップ" section="followUp">
+          {insights.followUp.message.japanese && (
+            <div
+              className="flex flex-col gap-2 rounded-lg p-3"
+              style={{ backgroundColor: `${SECTION_STYLES.followUp.color}14` }}
+            >
+              <SubHeading>Recap message to send / 送付用のお礼・確認メッセージ</SubHeading>
+              <p className="whitespace-pre-wrap text-foreground">{insights.followUp.message.japanese}</p>
+              <p className="whitespace-pre-wrap text-sm text-muted">{insights.followUp.message.english}</p>
+              <CopyButton text={insights.followUp.message.japanese} />
+            </div>
+          )}
+          {insights.followUp.questions.length > 0 && (
+            <>
+              <SubHeading>Questions to ask next time / 次回の質問</SubHeading>
+              <ul className="flex flex-col gap-2">
+                {insights.followUp.questions.map((q, i) => (
+                  <li
+                    key={i}
+                    className="rounded-lg p-3"
+                    style={{ backgroundColor: `${SECTION_STYLES.followUp.color}14` }}
+                  >
+                    <p className="font-medium text-foreground">{q.japanese}</p>
+                    <p className="text-sm italic text-muted">{q.romaji}</p>
+                    <p className="text-sm text-muted">{q.english}</p>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </Section>
+      )}
+
+      {insights && insights.carriedOver.length > 0 && (
+        <Section title="Since Earlier Meetings / 前回からの進捗" section="carried">
+          <ul className="flex flex-col gap-2">
+            {insights.carriedOver.map((c, i) => (
+              <li
+                key={i}
+                className="rounded-lg p-3"
+                style={{ backgroundColor: `${SECTION_STYLES.carried.color}14` }}
+              >
+                <Bilingual ja={c.item.ja} en={c.item.en} />
+                <div className="mt-2 border-t border-border/60 pt-2">
+                  <Bilingual ja={c.status.ja} en={c.status.en} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {insights && insights.people.length > 0 && (
+        <Section title="People / 参加者" section="people">
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-left text-sm">
+              <tbody>
+                {insights.people.map((p, i) => (
+                  <tr key={i} className={i > 0 ? "border-t border-border" : undefined}>
+                    <td className="whitespace-nowrap px-3 py-2 align-top font-medium text-foreground">
+                      {p.name ? `${p.name} (${p.speaker})` : p.speaker}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Bilingual ja={p.role.ja} en={p.role.en} />
+                      <div className="mt-1 text-muted">
+                        <Bilingual ja={p.caresAbout.ja} en={p.caresAbout.en} />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Section>
       )}
 

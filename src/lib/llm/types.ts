@@ -3,7 +3,9 @@ import type {
   Bilingual,
   CulturalNote,
   GlossaryTerm,
+  KeyPoint,
   KeyTopic,
+  MeetingInsights,
   SessionMode,
   SuggestedReplyGroup,
 } from "@/lib/types";
@@ -25,6 +27,8 @@ export interface AnalysisInputLine {
  */
 export interface AnalysisResult {
   title: Bilingual;
+  overview?: Bilingual;
+  keyPoints?: KeyPoint[];
   executiveSummary: { ja: string[]; en: string[] };
   keyTopics: KeyTopic[];
   actionItems: ActionItem[];
@@ -33,8 +37,22 @@ export interface AnalysisResult {
   culturalNotes: CulturalNote[];
   /** Casual mode only — providers should return [] for meeting/seminar. */
   suggestedReplies?: SuggestedReplyGroup[];
+  /** Absent when not produced (casual clips, or the insights call failed). */
+  insights?: MeetingInsights;
   /** Real-usage-based estimate; mock provider omits it (no real cost). */
   estimatedCostUsd?: number;
+}
+
+/** What the analysis knows beyond the transcript itself. */
+export interface AnalysisContext {
+  /** The reader's own words for who they are in the meeting; "" if not given. */
+  reader: string;
+  /** What earlier meetings established — see lib/memory.ts. */
+  memory: {
+    openActions: { description: string; owner: string; meeting: string }[];
+    people: { name: string; role: string }[];
+    terms: string[];
+  };
 }
 
 export interface AnalysisProvider {
@@ -44,5 +62,9 @@ export interface AnalysisProvider {
    * register (casual conversation vs. business meeting) and, for "casual",
    * enables suggestedReplies generation.
    */
-  analyze(lines: AnalysisInputLine[], mode: SessionMode): Promise<AnalysisResult>;
+  analyze(
+    lines: AnalysisInputLine[],
+    mode: SessionMode,
+    context: AnalysisContext
+  ): Promise<AnalysisResult>;
 }

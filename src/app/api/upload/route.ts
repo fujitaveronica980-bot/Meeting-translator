@@ -55,6 +55,14 @@ export async function POST(req: NextRequest) {
   const useSample = query.get("sample") === "true";
   const filename = query.get("filename") || undefined;
   const mimeType = req.headers.get("content-type") || undefined;
+  // Who the reader is, in their own words — sent as a header (URI-encoded,
+  // since it's usually Japanese) rather than in the URL.
+  let reader = "";
+  try {
+    reader = decodeURIComponent(req.headers.get("x-reader") ?? "").slice(0, 200);
+  } catch {
+    // malformed encoding: carry on without it
+  }
 
   let tempPath: string | null = null;
   const discardUpload = () => {
@@ -99,7 +107,7 @@ export async function POST(req: NextRequest) {
           // A Blob backed by the file on disk: read as it's sent, never
           // loaded whole.
           const audio = audioPath ? await openAsBlob(audioPath, { type: mimeType }) : new Blob([]);
-          await processSession(session, { audio, filename, mimeType, useSample });
+          await processSession(session, { audio, filename, mimeType, reader, useSample });
         } finally {
           if (audioPath) await unlink(audioPath).catch(() => {});
         }
