@@ -241,15 +241,18 @@ export default function Home() {
         unreachable: false,
       });
       try {
-        const form = new FormData();
-        form.append("mode", entryMode);
-        if (useSample) {
-          form.append("sample", "true");
-        } else if (entryFile) {
-          form.append("audio", entryFile);
-        }
+        // The audio goes up as the raw request body (not form data) so the
+        // server can stream it to disk instead of holding it in memory.
+        const query = new URLSearchParams({ mode: entryMode });
+        if (useSample) query.set("sample", "true");
+        else if (entryFile) query.set("filename", entryFile.name);
+        const upload = !useSample && entryFile ? entryFile : null;
 
-        const res = await fetch("/api/sessions", { method: "POST", body: form });
+        const res = await fetch(`/api/upload?${query}`, {
+          method: "POST",
+          body: upload,
+          headers: upload ? { "Content-Type": upload.type || "application/octet-stream" } : undefined,
+        });
         const data = await readJson<Session>(res);
 
         if (!res.ok || data.status === "error") {

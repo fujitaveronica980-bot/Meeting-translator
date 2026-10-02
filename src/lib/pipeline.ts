@@ -34,7 +34,7 @@ export async function createSession(params: {
  * report, saving progress to the session store as it goes. Deliberately not
  * tied to the request that uploaded the audio — a real recording takes many
  * minutes (STT polls for up to 20), far longer than a host will hold one
- * HTTP request open, so api/sessions/route.ts runs this after responding
+ * HTTP request open, so api/upload/route.ts runs this after responding
  * and the client polls the session until it's ready.
  */
 export async function processSession(

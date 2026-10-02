@@ -19,6 +19,11 @@ const MIME_CANDIDATES = [
   "audio/ogg;codecs=opus",
 ];
 
+// Speech doesn't need music-grade audio. Browsers default to roughly four
+// times this, which makes an hour-long recording ~50MB to upload instead of
+// ~15MB, for no gain in transcription accuracy.
+const AUDIO_BITS_PER_SECOND = 32000;
+
 function pickMimeType(): string | undefined {
   if (typeof MediaRecorder === "undefined") return undefined;
   return MIME_CANDIDATES.find((t) => MediaRecorder.isTypeSupported(t));
@@ -27,7 +32,7 @@ function pickMimeType(): string | undefined {
 /**
  * Records microphone audio entirely in the browser (MediaRecorder). On stop,
  * hands the assembled recording to `onStop` as a File — from there it goes
- * through the exact same /api/sessions pipeline as an uploaded file.
+ * through the exact same /api/upload pipeline as an uploaded file.
  *
  * No live transcription while recording: this just captures the whole
  * session locally, then processes it once you hit stop.
@@ -63,12 +68,16 @@ export function useAudioRecorder(onStop: (file: File) => void) {
   const start = useCallback(async () => {
     setState({ status: "idle", elapsedSec: 0, level: 0, error: null });
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Mono: one microphone, and half the data of stereo.
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
       streamRef.current = stream;
       chunksRef.current = [];
 
       const mimeType = pickMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorder = new MediaRecorder(stream, {
+        audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
+        ...(mimeType ? { mimeType } : {}),
+      });
       recorderRef.current = recorder;
 
       recorder.ondataavailable = (e) => {

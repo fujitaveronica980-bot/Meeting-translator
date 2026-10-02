@@ -15,6 +15,9 @@ export async function proxy(req: NextRequest) {
 
 export const config = {
   // Everything except the login page/API and Next's own static assets goes
-  // through the gate — deliberately including /api/sessions.
-  matcher: ["/((?!login|api/login|_next/static|_next/image|favicon.ico).*)"],
+  // through the gate — deliberately including /api/sessions. The one other
+  // exception is /api/upload: the proxy buffers the whole body of every
+  // request it handles, which a recording is far too big for, so that
+  // route checks the same cookie itself.
+  matcher: ["/((?!login|api/login|api/upload|_next/static|_next/image|favicon.ico).*)"],
 };

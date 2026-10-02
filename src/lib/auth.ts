@@ -1,5 +1,5 @@
 /**
- * Shared-password access gate for the whole app. Protects /api/sessions too
+ * Shared-password access gate for the whole app. Protects /api/upload too
  * (not just the page) — that's the endpoint that actually spends real money
  * on Speechmatics/Gemini calls, so it needs to be behind the gate, not just
  * the UI.
