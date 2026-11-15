@@ -19,12 +19,14 @@ import type {
  * Google Cloud project to move to pay-as-you-go rate limits. Check current
  * pricing/limits at https://ai.google.dev/gemini-api/docs/pricing.
  *
- * Model defaults to the "gemini-flash-lite-latest" alias rather than a
- * pinned version (e.g. gemini-2.5-flash) — pinned versions get retired for
- * new API keys over time ("this model is no longer available to new
- * users"), while the -latest alias always tracks Google's current
- * recommended model, and flash-lite is the cheapest tier that's still solid
- * for translation/extraction work. Override with GEMINI_MODEL if needed.
+ * Model defaults to the "gemini-flash-latest" alias rather than a pinned
+ * version (e.g. gemini-2.5-flash) — pinned versions get retired for new API
+ * keys over time ("this model is no longer available to new users"), while
+ * the -latest alias always tracks Google's current recommended model.
+ * Flash rather than flash-lite: the report is mostly judgment (what was
+ * implied, who owes what, what a softened refusal really meant), where the
+ * lite tier is noticeably weaker, and a report is still only a few US cents.
+ * Set GEMINI_MODEL=gemini-flash-lite-latest to go back to the cheapest tier.
  *
  * The report comes from four calls that never echo the transcript back —
  * the meeting analysis, two for the insights layer (what the reader should
@@ -43,6 +45,8 @@ import type {
  * short recorded bursts during a live conversation rather than post-hoc
  * meeting review.
  */
+
+const DEFAULT_MODEL = "gemini-flash-latest";
 
 const bilingualSchema = {
   type: Type.OBJECT,
@@ -248,13 +252,17 @@ const PRICING_PER_MILLION_TOKENS: { match: string; input: number; output: number
   { match: "flash", input: 0.75, output: 3.75 },
 ];
 
+// Fallback when the response doesn't say which model answered: price it as
+// the default model's tier.
+const DEFAULT_PRICING_MATCH = "flash";
+
 function estimateCostUsd(response: GenerateContentResponse): number {
   const usage = response.usageMetadata;
   if (!usage) return 0;
   const modelVersion = response.modelVersion || "";
   const pricing =
     PRICING_PER_MILLION_TOKENS.find((p) => modelVersion.includes(p.match)) ??
-    PRICING_PER_MILLION_TOKENS.find((p) => p.match === "flash-lite")!;
+    PRICING_PER_MILLION_TOKENS.find((p) => p.match === DEFAULT_PRICING_MATCH)!;
 
   const inputTokens = usage.promptTokenCount ?? 0;
   const outputTokens = (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0);
@@ -603,7 +611,7 @@ export const geminiAnalysisProvider: AnalysisProvider = {
     }
 
     const ai = new GoogleGenAI({ apiKey });
-    const model = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+    const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
     const input = JSON.stringify(lines);
     const issues: string[] = [];
     let costUsd = 0;

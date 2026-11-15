@@ -7,10 +7,11 @@ export type RecorderStatus = "idle" | "recording" | "error";
 export interface AudioRecorderState {
   status: RecorderStatus;
   elapsedSec: number;
-  /** 0-1 mic input level, for a simple "is it actually picking up sound" meter. */
-  level: number;
   error: string | null;
 }
+
+/** Receives the 0-1 mic input level, several times a second while recording. */
+export type LevelListener = (level: number) => void;
 
 const MIME_CANDIDATES = [
   "audio/webm;codecs=opus",
@@ -41,9 +42,22 @@ export function useAudioRecorder(onStop: (file: File) => void) {
   const [state, setState] = useState<AudioRecorderState>({
     status: "idle",
     elapsedSec: 0,
-    level: 0,
     error: null,
   });
+  // The mic level changes ~10 times a second. Kept out of React state on
+  // purpose: as state it re-rendered the whole page (sidebar, open report)
+  // on every sample, which made phones stutter while recording. Only the
+  // meter subscribes to it and updates its own DOM node.
+  const levelListenersRef = useRef(new Set<LevelListener>());
+  const emitLevel = useCallback((level: number) => {
+    levelListenersRef.current.forEach((fn) => fn(level));
+  }, []);
+  const subscribeLevel = useCallback((fn: LevelListener) => {
+    levelListenersRef.current.add(fn);
+    return () => {
+      levelListenersRef.current.delete(fn);
+    };
+  }, []);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -66,7 +80,7 @@ export function useAudioRecorder(onStop: (file: File) => void) {
   }, []);
 
   const start = useCallback(async () => {
-    setState({ status: "idle", elapsedSec: 0, level: 0, error: null });
+    setState({ status: "idle", elapsedSec: 0, error: null });
     try {
       // Mono: one microphone, and half the data of stereo.
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
@@ -88,7 +102,8 @@ export function useAudioRecorder(onStop: (file: File) => void) {
         const ext = mimeType?.includes("mp4") ? "m4a" : mimeType?.includes("ogg") ? "ogg" : "webm";
         const file = new File([blob], `recording.${ext}`, { type: blob.type });
         cleanup();
-        setState((s) => ({ ...s, status: "idle", level: 0 }));
+        emitLevel(0);
+        setState((s) => ({ ...s, status: "idle" }));
         onStop(file);
       };
       recorder.start();
@@ -109,7 +124,7 @@ export function useAudioRecorder(onStop: (file: File) => void) {
           sumSq += v * v;
         }
         const rms = Math.sqrt(sumSq / data.length);
-        setState((s) => ({ ...s, level: Math.min(1, rms * 4) }));
+        emitLevel(Math.min(1, rms * 4));
       }, 100);
 
       timerRef.current = setInterval(() => {
@@ -122,18 +137,17 @@ export function useAudioRecorder(onStop: (file: File) => void) {
       setState({
         status: "error",
         elapsedSec: 0,
-        level: 0,
         error:
           err instanceof Error
             ? err.message
             : "Could not access the microphone.",
       });
     }
-  }, [cleanup, onStop]);
+  }, [cleanup, emitLevel, onStop]);
 
   const stop = useCallback(() => {
     recorderRef.current?.stop();
   }, []);
 
-  return { ...state, start, stop };
+  return { ...state, start, stop, subscribeLevel };
 }
