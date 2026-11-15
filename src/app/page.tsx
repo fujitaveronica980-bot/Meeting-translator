@@ -6,6 +6,7 @@ import { buildMemory } from "@/lib/memory";
 import { MemoryView } from "@/components/MemoryView";
 import { ReportView } from "@/components/ReportView";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
+import { LevelMeter } from "@/components/LevelMeter";
 import { useScreenWakeLock } from "@/hooks/useScreenWakeLock";
 
 const MODES: { value: SessionMode; label: string }[] = [
@@ -541,12 +542,7 @@ export default function Home() {
                   </button>
                 )}
                 {recorder.status === "recording" && (
-                  <div className="h-2 w-24 overflow-hidden rounded-full bg-subtle">
-                    <div
-                      className="h-full rounded-full bg-red-500 transition-[width] duration-100"
-                      style={{ width: `${Math.round(recorder.level * 100)}%` }}
-                    />
-                  </div>
+                  <LevelMeter subscribe={recorder.subscribeLevel} />
                 )}
               </div>
               <p className="text-xs text-muted/80">

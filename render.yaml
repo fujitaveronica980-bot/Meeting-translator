@@ -13,6 +13,13 @@ services:
         sync: false
       - key: SPEECHMATICS_API_KEY
         sync: false
+      # Optional, Speechmatics only — names/terms the transcription should
+      # expect, comma-separated. See .env.example.
+      - key: STT_VOCABULARY
+        sync: false
+      # Optional — defaults to gemini-flash-latest. See .env.example.
+      - key: GEMINI_MODEL
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       # Optional — shows a spend-vs-budget bar in the sidebar. Baked in at

@@ -1,5 +1,6 @@
 import type { SttProvider, TranscribeOptions, TranscriptionResult, DiarizedSegment } from "./types";
 import { PollFatalError, pollUntilDone, statusCheckError } from "./poll";
+import { customVocabulary } from "./vocabulary";
 
 /**
  * Speechmatics Batch Transcription API adapter.
@@ -96,6 +97,7 @@ export const speechmaticsProvider: SttProvider = {
       throw new Error("SPEECHMATICS_API_KEY is not set");
     }
 
+    const vocabulary = customVocabulary();
     const config = {
       type: "transcription",
       transcription_config: {
@@ -105,6 +107,11 @@ export const speechmaticsProvider: SttProvider = {
         speaker_diarization_config: {
           speaker_sensitivity: 0.5,
         },
+        // See vocabulary.ts. Omitted entirely when empty — an empty list
+        // is not the same request as no list.
+        ...(vocabulary.length
+          ? { additional_vocab: vocabulary.map((content) => ({ content })) }
+          : {}),
       },
     };
 
